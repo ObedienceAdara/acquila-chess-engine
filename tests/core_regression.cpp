@@ -332,11 +332,11 @@ void test_quiescence_and_tapered_hce() {
     // material-only horizon can stop after the second ply and mis-evaluate
     // the position; quiescence must carry the forced capture sequence through.
     Board tactical;
-    tactical.set_fen("3r1q1k/8/8/8/8/8/3R4/3QK3 w - - 0 1");
+    tactical.set_fen("k4q1r/8/8/7Q/8/8/8/4K2R w - - 0 1");
     Searcher tactical_search(tactical);
-    const Move qxd8=find_uci(tactical,"d1d8");
-    require(qxd8.data!=0, "quiescence tactical fixture move is illegal");
-    require(tactical_search.debug_see(qxd8)>0, "tactical chain capture was incorrectly SEE-filtered");
+    const Move qxh8=find_uci(tactical,"h5h8");
+    require(qxh8.data!=0, "quiescence tactical fixture move is illegal");
+    require(tactical_search.debug_see(qxh8)>0, "tactical chain capture was incorrectly SEE-filtered");
     const Score stand=tactical_search.debug_eval();
     tactical_search.debug_reset_nodes();
     const Score qscore=tactical_search.debug_quiesce(-INF,INF,0,8);
@@ -346,10 +346,10 @@ void test_quiescence_and_tapered_hce() {
     // Quiet-check extension regression: with no captures available, qsearch should
     // still inspect controlled checking moves rather than stopping immediately at stand-pat.
     Board checks;
-    checks.set_fen("7k/8/8/5K2/7Q/8/8/8 w - - 0 1");
+    checks.set_fen("6k1/8/5K2/7Q/8/8/8/8 w - - 0 1");
     Searcher check_search(checks);
-    const Move qh6=find_uci(checks,"h5h6");
-    require(qh6.data!=0, "quiet-check fixture move is illegal");
+    const Move qe8=find_uci(checks,"h5e8");
+    require(qe8.data!=0, "quiet-check fixture move is illegal");
     check_search.debug_reset_nodes();
     check_search.debug_quiesce(-INF,INF,0,2);
     require(check_search.node_count()>1, "quiescence did not explore a quiet checking move");
