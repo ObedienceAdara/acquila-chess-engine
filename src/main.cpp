@@ -517,23 +517,383 @@ class Searcher {
       {-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10, 0,-10,-10,-10,-10,-10,-10,0, 20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20}
     };
 
-    Score eval() const {
-        Score s=0;
-        for(int sqr=0;sqr<64;sqr++){
-            Piece p=pos.b[sqr];
-            if(!p)continue;
-            int pt=type_of(p),idx=pt-1;
-            int ps=pos.side==WHITE?pst[idx][sqr]:-pst[idx][sqr^56];
-            Score v=piece_value[pt]+ps;
-            s+=(color_of(p)==pos.side?v:-v);
+    static constexpr int EVAL_PHASE_MAX=24;
+    static constexpr int eval_mg_value[6]={82,337,365,477,1025,0};
+    static constexpr int eval_eg_value[6]={94,281,297,512,936,0};
+    static constexpr int phase_value[6]={0,1,1,2,4,0};
+
+    static int oriented_rank(Color c,int s){
+        const int r=rank_of(s);
+        return c==WHITE?r:7-r;
+    }
+
+    static int chebyshev_distance(int a,int b){
+        const int df=file_of(a)>file_of(b)?file_of(a)-file_of(b):file_of(b)-file_of(a);
+        const int dr=rank_of(a)>rank_of(b)?rank_of(a)-rank_of(b):rank_of(b)-rank_of(a);
+        return std::max(df,dr);
+    }
+
+    static int center_distance(int s){
+        const int df=file_of(s)>3?file_of(s)-3:3-file_of(s);
+        const int dr=rank_of(s)>3?rank_of(s)-3:3-rank_of(s);
+        return df+dr;
+    }
+
+    U64 forward_pawn_mask(Color c,int s) const {
+        U64 mask=0;
+        const int f=file_of(s),r=rank_of(s);
+        if(c==WHITE){
+            for(int rr=r+1;rr<8;rr++)
+                mask|=FileMask[f]&RankMask[rr];
+        }else{
+            for(int rr=r-1;rr>=0;rr--)
+                mask|=FileMask[f]&RankMask[rr];
         }
-        U64 own=pos.occ[pos.side],attacks=0;
-        int ks=pos.king_square(pos.side);
-        if(ks>=0)attacks|=KingAtt[ks];
-        s+=popcount(attacks&~own)*2;
-        if(pos.in_check(pos.side))s-=25;
-        if(pos.in_check(opp(pos.side)))s+=25;
-        return s;
+        return mask;
+    }
+
+    U64 forward_with_adjacent_mask(Color c,int s) const {
+        U64 mask=0;
+        const int f=file_of(s),r=rank_of(s);
+        for(int ff=std::max(0,f-1);ff<=std::min(7,f+1);ff++){
+            if(c==WHITE){
+                for(int rr=r+1;rr<8;rr++)mask|=FileMask[ff]&RankMask[rr];
+            }else{
+                for(int rr=r-1;rr>=0;rr--)mask|=FileMask[ff]&RankMask[rr];
+            }
+        }
+        return mask;
+    }
+
+    bool is_passed_pawn(Color c,int s,U64 enemy_pawns) const {
+        return (forward_with_adjacent_mask(c,s)&enemy_pawns)==0;
+    }
+
+    bool is_pawn_supported(Color c,int s,U64 own_pawns) const {
+        return (PawnAtt[opp(c)][s]&own_pawns)!=0;
+    }
+
+    bool is_defended(Color c,int s) const {
+        if(PawnAtt[opp(c)][s]&pos.bb[(c==WHITE?WP:BP)-1])return true;
+        if(KnightAtt[s]&pos.bb[(c==WHITE?WN:BN)-1])return true;
+        if(KingAtt[s]&pos.bb[(c==WHITE?WK:BK)-1])return true;
+        const U64 bishops=pos.bb[(c==WHITE?WB:BB)-1]|pos.bb[(c==WHITE?WQ:BQ)-1];
+        const U64 rooks=pos.bb[(c==WHITE?WR:BR)-1]|pos.bb[(c==WHITE?WQ:BQ)-1];
+        return (bishop_attacks(s,pos.all)&bishops)||(rook_attacks(s,pos.all)&rooks);
+    }
+
+    U64 control_map(Color c) const {
+        U64 control=PawnAtt[opp(c)][0] & 0ULL;
+        U64 pawns=pos.bb[(c==WHITE?WP:BP)-1];
+        U64 own=pos.occ[c];
+        while(pawns){
+            const int s=poplsb(pawns);
+            control|=PawnAtt[c][s];
+        }
+        U64 knights=pos.bb[(c==WHITE?WN:BN)-1];
+        while(knights){
+            const int s=poplsb(knights);
+            control|=KnightAtt[s];
+        }
+        U64 bishops=pos.bb[(c==WHITE?WB:BB)-1];
+        while(bishops){
+            const int s=poplsb(bishops);
+            control|=bishop_attacks(s,pos.all);
+        }
+        U64 rooks=pos.bb[(c==WHITE?WR:BR)-1];
+        while(rooks){
+            const int s=poplsb(rooks);
+            control|=rook_attacks(s,pos.all);
+        }
+        U64 queens=pos.bb[(c==WHITE?WQ:BQ)-1];
+        while(queens){
+            const int s=poplsb(queens);
+            control|=queen_attacks(s,pos.all);
+        }
+        U64 king=pos.bb[(c==WHITE?WK:BK)-1];
+        if(king)control|=KingAtt[__builtin_ctzll(king)];
+        (void)own;
+        return control;
+    }
+
+    int file_pawn_count(U64 pawns,int f) const {
+        return popcount(pawns&FileMask[f]);
+    }
+
+    Score evaluate_side_terms(Color c,int&mg,int&eg) const {
+        const Color enemy=opp(c);
+        const U64 own_pawns=pos.bb[(c==WHITE?WP:BP)-1];
+        const U64 enemy_pawns=pos.bb[(enemy==WHITE?WP:BP)-1];
+        const int sign=(c==WHITE?1:-1);
+
+        auto add=[&](int mgv,int egv){
+            mg+=sign*mgv;
+            eg+=sign*egv;
+        };
+
+        int pawn_islands=0;
+        bool previous_file=false;
+        for(int f=0;f<8;f++){
+            const bool has=file_pawn_count(own_pawns,f)>0;
+            if(has&&!previous_file)++pawn_islands;
+            previous_file=has;
+        }
+        if(pawn_islands>1)add(-8*(pawn_islands-1),-12*(pawn_islands-1));
+
+        for(int f=0;f<8;f++){
+            const int count=file_pawn_count(own_pawns,f);
+            if(count>1)add(-10*(count-1),-14*(count-1));
+        }
+
+        U64 pawns=own_pawns;
+        while(pawns){
+            const int s=poplsb(pawns);
+            const int f=file_of(s);
+            const int r=rank_of(s);
+            const int orank=oriented_rank(c,s);
+
+            U64 adjacent_files=0;
+            if(f>0)adjacent_files|=FileMask[f-1];
+            if(f<7)adjacent_files|=FileMask[f+1];
+
+            const bool isolated=(own_pawns&adjacent_files)==0;
+            if(isolated)add(-12,-18);
+
+            const bool supported=is_pawn_supported(c,s,own_pawns);
+            if(supported)add(5,8);
+
+            if(f>0 && (own_pawns&FileMask[f-1]) &&
+               ((own_pawns&FileMask[f-1]) & RankMask[r]))add(5,7);
+            if(f<7 && (own_pawns&FileMask[f+1]) &&
+               ((own_pawns&FileMask[f+1]) & RankMask[r]))add(5,7);
+
+            const bool passed=is_passed_pawn(c,s,enemy_pawns);
+            if(passed){
+                static constexpr int pass_mg[8]={0,0,4,10,20,36,58,92};
+                static constexpr int pass_eg[8]={0,0,12,24,42,70,112,170};
+                add(pass_mg[orank],pass_eg[orank]);
+
+                if(supported)add(12,22);
+
+                const int own_king=pos.king_square(c);
+                const int enemy_king=pos.king_square(enemy);
+                if(own_king>=0&&enemy_king>=0){
+                    const int race=chebyshev_distance(enemy_king,s)-chebyshev_distance(own_king,s);
+                    add(std::clamp(race*2,-12,12),std::clamp(race*4,-24,24));
+                }
+
+                const Piece rook=(c==WHITE?WR:BR);
+                U64 rooks=pos.bb[rook-1];
+                bool rook_behind=false;
+                while(rooks){
+                    const int rs=poplsb(rooks);
+                    if(file_of(rs)==f && ((c==WHITE&&rank_of(rs)<r)||(c==BLACK&&rank_of(rs)>r))){
+                        rook_behind=true;
+                        break;
+                    }
+                }
+                if(rook_behind)add(10,20);
+            }
+
+            bool adjacent_ahead=false;
+            if(f>0 && (own_pawns&FileMask[f-1])){
+                U64 q=own_pawns&FileMask[f-1];
+                while(q){
+                    const int ps=poplsb(q);
+                    if(oriented_rank(c,ps)>orank){adjacent_ahead=true;break;}
+                }
+            }
+            if(!adjacent_ahead && f<7 && (own_pawns&FileMask[f+1])){
+                U64 q=own_pawns&FileMask[f+1];
+                while(q){
+                    const int ps=poplsb(q);
+                    if(oriented_rank(c,ps)>orank){adjacent_ahead=true;break;}
+                }
+            }
+
+            const int front=s+(c==WHITE?8:-8);
+            const bool enemy_controls_front=(front>=0&&front<64)&&((PawnAtt[opp(enemy)][front]&enemy_pawns)!=0);
+            if(!isolated&&!passed&&adjacent_ahead&&enemy_controls_front)
+                add(-10,-14);
+        }
+
+        const int bishop_count=popcount(pos.bb[(c==WHITE?WB:BB)-1]);
+        if(bishop_count>=2)add(30,42);
+
+        const U64 own_control=control_map(c);
+        const U64 own_nonpawns=pos.occ[c]&~own_pawns;
+        add(popcount(own_control&own_nonpawns)*3,popcount(own_control&own_nonpawns)*5);
+
+        U64 bishops=pos.bb[(c==WHITE?WB:BB)-1];
+        while(bishops){
+            const int s=poplsb(bishops);
+            const int mr=oriented_rank(c,s);
+            const bool pawn_safe=(PawnAtt[opp(enemy)][s]&enemy_pawns)==0;
+            const bool supported=is_pawn_supported(c,s,own_pawns);
+            const bool outpost=mr>=3&&mr<=5&&pawn_safe&&supported;
+            if(outpost)add(18,24);
+
+            const int mobility=popcount(bishop_attacks(s,pos.all)&~pos.occ[c]);
+            add(mobility*4,mobility*5);
+            if(mobility<=2)add(-12,-7);
+        }
+
+        U64 knights=pos.bb[(c==WHITE?WN:BN)-1];
+        while(knights){
+            const int s=poplsb(knights);
+            const int mr=oriented_rank(c,s);
+            const bool pawn_safe=(PawnAtt[opp(enemy)][s]&enemy_pawns)==0;
+            const bool supported=is_pawn_supported(c,s,own_pawns);
+            const bool outpost=mr>=3&&mr<=5&&pawn_safe&&supported;
+            if(outpost)add(22,30);
+
+            const int mobility=popcount(KnightAtt[s]&~pos.occ[c]);
+            add(mobility*5,mobility*4);
+            if(mobility<=2)add(-14,-8);
+        }
+
+        U64 rooks=pos.bb[(c==WHITE?WR:BR)-1];
+        while(rooks){
+            const int s=poplsb(rooks);
+            const int f=file_of(s);
+            const bool own_pawn=bool(own_pawns&FileMask[f]);
+            const bool enemy_pawn=bool(enemy_pawns&FileMask[f]);
+            const int mobility=popcount(rook_attacks(s,pos.all)&~pos.occ[c]);
+            if(!own_pawn)add(18,24);
+            if(!own_pawn&&!enemy_pawn)add(12,18);
+            if(oriented_rank(c,s)==6)add(18,28);
+            add(mobility*2,mobility*3);
+            if(mobility<=1)add(-10,-5);
+        }
+
+        U64 queens=pos.bb[(c==WHITE?WQ:BQ)-1];
+        while(queens){
+            const int s=poplsb(queens);
+            const int mobility=popcount(queen_attacks(s,pos.all)&~pos.occ[c]);
+            add(mobility,mobility*2);
+        }
+
+        const std::array<std::pair<int,int>,4> home_minor={
+            c==WHITE?std::pair<int,int>{sq(1,0),WN}:std::pair<int,int>{sq(1,7),BN},
+            c==WHITE?std::pair<int,int>{sq(6,0),WN}:std::pair<int,int>{sq(6,7),BN},
+            c==WHITE?std::pair<int,int>{sq(2,0),WB}:std::pair<int,int>{sq(2,7),BB},
+            c==WHITE?std::pair<int,int>{sq(5,0),WB}:std::pair<int,int>{sq(5,7),BB}
+        };
+        for(const auto&home:home_minor)
+            if(pos.b[home.first]==home.second)add(-8,0);
+
+        const int ks=pos.king_square(c);
+        if(ks>=0){
+            int shelter_mg=0,shelter_eg=0;
+            const int kf=file_of(ks);
+            const int kr=rank_of(ks);
+            for(int ff=std::max(0,kf-1);ff<=std::min(7,kf+1);ff++){
+                const U64 pawns_on_file=own_pawns&FileMask[ff];
+                int best_gap=99;
+                U64 q=pawns_on_file;
+                while(q){
+                    const int ps=poplsb(q);
+                    const int gap=(c==WHITE?rank_of(ps)-kr:kr-rank_of(ps));
+                    if(gap>=1&&gap<best_gap)best_gap=gap;
+                }
+                if(best_gap==1){shelter_mg+=14;shelter_eg+=4;}
+                else if(best_gap==2){shelter_mg+=9;shelter_eg+=3;}
+                else shelter_mg-=12;
+            }
+            add(shelter_mg,shelter_eg);
+
+            U64 ring=KingAtt[ks];
+            int attack_units=0;
+            U64 enemy_knights=pos.bb[(enemy==WHITE?WN:BN)-1];
+            while(enemy_knights){const int s=poplsb(enemy_knights);attack_units+=popcount(KnightAtt[s]&ring)*4;}
+            U64 enemy_bishops=pos.bb[(enemy==WHITE?WB:BB)-1];
+            while(enemy_bishops){const int s=poplsb(enemy_bishops);attack_units+=popcount(bishop_attacks(s,pos.all)&ring)*4;}
+            U64 enemy_rooks=pos.bb[(enemy==WHITE?WR:BR)-1];
+            while(enemy_rooks){const int s=poplsb(enemy_rooks);attack_units+=popcount(rook_attacks(s,pos.all)&ring)*5;}
+            U64 enemy_queens=pos.bb[(enemy==WHITE?WQ:BQ)-1];
+            while(enemy_queens){const int s=poplsb(enemy_queens);attack_units+=popcount(queen_attacks(s,pos.all)&ring)*7;}
+            add(-std::min(40,attack_units),-std::min(16,attack_units/2));
+
+            int open_near_king=0;
+            for(int ff=std::max(0,kf-1);ff<=std::min(7,kf+1);ff++)
+                if(!(own_pawns&FileMask[ff])&&!(enemy_pawns&FileMask[ff]))++open_near_king;
+            add(-open_near_king*10,-open_near_king*3);
+
+            int safe_king_squares=0;
+            U64 king_moves=KingAtt[ks]&~pos.occ[c];
+            while(king_moves){
+                const int dst=poplsb(king_moves);
+                if(!pos.attacked(dst,enemy))++safe_king_squares;
+            }
+            add(safe_king_squares*2,safe_king_squares*6);
+
+            add(-center_distance(ks),12-center_distance(ks)*2);
+        }
+
+        const U64 center=bit(sq(3,3))|bit(sq(4,3))|bit(sq(3,4))|bit(sq(4,4));
+        const U64 space_zone=(c==WHITE)
+            ?(RankMask[3]|RankMask[4]|RankMask[5])
+            :(RankMask[2]|RankMask[3]|RankMask[4]);
+        add(popcount(own_control&center)*3,popcount(own_control&center)*2);
+        add(popcount(own_control&space_zone),0);
+
+        return 0;
+    }
+
+    Score eval() const {
+        int mg=0,eg=0;
+        int phase=0;
+
+        for(int sqr=0;sqr<64;sqr++){
+            const Piece p=pos.b[sqr];
+            if(!p)continue;
+            const PieceType pt=type_of(p);
+            if(pt==KING)continue;
+            const int idx=pt-1;
+            const Color c=color_of(p);
+            const int sign=(c==WHITE?1:-1);
+            const int oriented=c==WHITE?sqr:sqr^56;
+            const int mg_ps=pst[idx][oriented];
+            int eg_ps=0;
+            const int cr=center_distance(oriented);
+
+            switch(pt){
+                case PAWN: eg_ps=oriented_rank(c,sqr)*3+(6-cr); break;
+                case KNIGHT: eg_ps=16-cr*3; break;
+                case BISHOP: eg_ps=10-cr*2; break;
+                case ROOK: eg_ps=(oriented_rank(c,sqr)==6?18:0)-cr; break;
+                case QUEEN: eg_ps=4-cr; break;
+                default: break;
+            }
+
+            mg+=sign*(eval_mg_value[idx]+mg_ps);
+            eg+=sign*(eval_eg_value[idx]+eg_ps);
+            phase+=phase_value[idx];
+        }
+
+        const int wk=pos.king_square(WHITE),bk=pos.king_square(BLACK);
+        if(wk>=0){
+            const int c=center_distance(wk);
+            mg+=(0-c);
+            eg+=(12-c*2);
+        }
+        if(bk>=0){
+            const int c=center_distance(bk);
+            mg-=(0-c);
+            eg-=(12-c*2);
+        }
+
+        evaluate_side_terms(WHITE,mg,eg);
+        evaluate_side_terms(BLACK,mg,eg);
+
+        phase=std::clamp(phase,0,EVAL_PHASE_MAX);
+        Score blended=(mg*phase+eg*(EVAL_PHASE_MAX-phase))/EVAL_PHASE_MAX;
+        blended+=(pos.side==WHITE?8:-8);
+
+        if(pos.in_check(WHITE))blended-=18;
+        if(pos.in_check(BLACK))blended+=18;
+
+        return pos.side==WHITE?blended:-blended;
     }
 
     int see_value(PieceType pt) const {
@@ -695,37 +1055,122 @@ class Searcher {
         return out;
     }
 
-    Score quiesce(Score alpha,Score beta,int ply){
+    int quiescence_delta(const Move&m) const {
+        int gain=0;
+        const Piece cap=captured_piece(m);
+        if(cap!=EMPTY)gain+=see_value(type_of(cap));
+        if(m.flag()==Move::PROMOTION)
+            gain+=std::max(0,see_value(PieceType(m.promo()))-see_value(PAWN));
+        return gain;
+    }
+
+    Score quiesce(Score alpha,Score beta,int ply,int qdepth=8){
         touch();
         if(stop.load())return 0;
 
-        bool chk=pos.in_check(pos.side);
-        auto ms=pos.legal(chk?false:true);
-        if(chk&&ms.empty())return -MATE+ply;
-        if(!chk&&ms.empty()&&pos.legal(false).empty())return 0;
+        const bool chk=pos.in_check(pos.side);
         if(pos.is_draw_for_search())return 0;
 
-        Score stand=eval();
+        auto legal_moves=pos.legal(false);
+        if(legal_moves.empty())return chk?(-MATE+ply):0;
+
+        // In check there is no stand-pat: every legal evasion is tactically relevant.
+        if(chk){
+            std::vector<Move> evasions=ordered(legal_moves,Move{},ply,Move{});
+            Score best=-INF;
+            for(const auto&m:evasions){
+                Undo u;
+                if(!pos.make(m,u))continue;
+                const Score sc=-quiesce(-beta,-alpha,ply+1,std::max(0,qdepth-1));
+                pos.undo(u);
+                if(stop.load())return 0;
+                if(sc>best)best=sc;
+                if(sc>=beta)return beta;
+                if(sc>alpha)alpha=sc;
+            }
+            return best;
+        }
+
+        // Stand-pat is valid only outside check. A score above beta is an immediate
+        // cutoff; otherwise it still raises alpha before selective tactical search.
+        const Score stand=eval();
         if(stand>=beta)return beta;
         if(stand>alpha)alpha=stand;
 
-        std::vector<Move> caps;
-        caps.reserve(ms.size());
-        for(const auto&m:ms){
-            Piece cap=captured_piece(m);
-            if(chk||cap!=EMPTY||m.flag()==Move::ENPASSANT||m.flag()==Move::PROMOTION)
-                caps.push_back(m);
-        }
+        struct QCandidate { Move move{}; int category=0; int score=0; bool gives_check=false; };
+        std::vector<QCandidate> candidates;
+        candidates.reserve(legal_moves.size());
 
-        for(const auto&m:ordered(caps,Move{},ply,Move{})){
+        // 1) Captures, but only SEE-safe captures survive the initial filter.
+        // 2) Promotions are searched even when quiet because they change material
+        //    and can be missed entirely by a capture-only qsearch.
+        // 3) Quiet checking moves extend the tactical horizon at controlled qdepth.
+        for(const auto&m:legal_moves){
+            const Piece cap=captured_piece(m);
+            const bool capture=is_capture(m);
+            const bool promotion=m.flag()==Move::PROMOTION;
+
+            if(capture||promotion){
+                if(capture&&see(m)<0){
+                    Undo u;
+                    if(!pos.make(m,u))continue;
+                    const bool check_after=pos.in_check(pos.side);
+                    pos.undo(u);
+                    if(!check_after)continue;
+                    candidates.push_back({m,2,700000,true});
+                    continue;
+                }
+                int score=promotion?800000:900000;
+                score+=std::clamp(see(m)*8,-40000,40000);
+                if(cap!=EMPTY)score+=see_value(type_of(cap));
+                candidates.push_back({m,promotion&&!capture?1:0,score,false});
+                continue;
+            }
+
+            if(qdepth<=0)continue;
+
             Undo u;
             if(!pos.make(m,u))continue;
-            Score sc=-quiesce(-beta,-alpha,ply+1);
+            const bool check_after=pos.in_check(pos.side);
             pos.undo(u);
+            if(check_after)candidates.push_back({m,2,700000,true});
+        }
+
+        std::stable_sort(candidates.begin(),candidates.end(),[](const QCandidate&a,const QCandidate&b){
+            if(a.category!=b.category)return a.category<b.category;
+            return a.score>b.score;
+        });
+
+        constexpr int DELTA_MARGIN=110;
+
+        // SEE filtering comes before delta pruning: a capture that already loses
+        // material is normally outside the tactical shell unless it gives check.
+        for(const auto&candidate:candidates){
+            const Move&m=candidate.move;
+            const Piece cap=captured_piece(m);
+            const bool capture=is_capture(m);
+            const bool promotion=m.flag()==Move::PROMOTION;
+
+            if(!candidate.gives_check){
+                const int optimistic_gain=quiescence_delta(m);
+                if(stand+optimistic_gain+DELTA_MARGIN<=alpha)continue;
+            }
+
+            // The search path here is deliberately make/unmake checked again so
+            // the candidate classifier remains independent from legality code.
+            Undo u;
+            if(!pos.make(m,u))continue;
+            const Score sc=-quiesce(-beta,-alpha,ply+1,std::max(0,qdepth-1));
+            pos.undo(u);
+
+            (void)cap;
+            (void)capture;
+            (void)promotion;
             if(stop.load())return 0;
             if(sc>=beta)return beta;
             if(sc>alpha)alpha=sc;
         }
+
         return alpha;
     }
 
@@ -929,6 +1374,10 @@ public:
     const TT& debug_tt()const{return tt;}
     Score debug_search(int depth,Score alpha=-INF,Score beta=INF,int ply=0){
         return search(depth,alpha,beta,ply,true,Move{});
+    }
+    Score debug_eval() const { return eval(); }
+    Score debug_quiesce(Score alpha=-INF,Score beta=INF,int ply=0,int qdepth=8){
+        return quiesce(alpha,beta,ply,qdepth);
     }
     int debug_see(const Move&m)const{return see(m);}
     int debug_move_score(const Move&m,const Move&ttm={},const Move&counter_move={},int ply=0)const{
