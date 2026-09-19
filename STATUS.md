@@ -1,6 +1,6 @@
-# Aquila v0.3 Status
+# Aquila v0.4 Status
 
-## Move-ordering and search-heuristics release
+## Quiescence + tapered HCE release
 
 | Area | Status |
 |---|---|
@@ -32,8 +32,15 @@
 | LMR | Implemented |
 | Null move | Implemented |
 | Futility pruning | Implemented |
-| Quiescence | Implemented |
-| HCE | Baseline only |
+| Quiescence | SEE-filtered captures + promotions + controlled checks + delta pruning + stand-pat + bounded evasions |
+| Quiescence regressions | Multi-capture horizon + quiet-check coverage |
+| HCE | Layered tapered evaluator |
+| HCE material | Tuned middlegame/endgame piece values |
+| HCE pawn structure | Passed, protected passed, isolated, doubled, backward, connected, chains, islands |
+| HCE piece activity | Mobility, outposts, bishop pair, open/semi-open files, 7th rank, trapped pieces, coordination |
+| HCE king safety | Shelter, pawn shield, king-ring attacks, open files, safe squares |
+| HCE space/development | Center control, space, minor-piece development |
+| HCE endgame | King activity, passer races, rook-behind-passer activity |
 | NNUE | Not yet implemented |
 | SMP | Not yet implemented |
 | PolyGlot book | Not yet implemented |
@@ -42,4 +49,4 @@
 
 ## Strength claim
 
-No Elo or "Stockfish-level" claim is made. This release establishes a correctness-tested search-state baseline before further search/evaluation optimization. The new search heuristics are engineering changes, not an Elo claim.
+No Elo or "Stockfish-level" claim is made. This release establishes a correctness-tested tactical-horizon and classical-evaluation baseline before quantitative strength testing. The new heuristics are engineering changes, not an Elo claim.
