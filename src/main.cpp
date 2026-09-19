@@ -510,8 +510,8 @@ class Searcher {
 
     const int pst[6][64] = {
       {0,5,5,0,0,5,5,0, 5,10,10,8,8,10,10,5, 3,6,8,12,12,8,6,3, 0,0,2,7,7,2,0,0, 0,0,0,5,5,0,0,0, 2,0,0,-5,-5,0,0,2, 2,4,4,-8,-8,4,4,2, 0,0,0,0,0,0,0,0},
-      {-50,-40,-30,-30,-30,-30,-40,-50,-40,-20,0,0,0,0,-20,-40,-40,0,10,15,15,10,0,-30,-30,5,15,20,20,15,5,-30,-30,0,15,20,20,15,0,-30,-40,-20,0,5,5,0,-20,-40,-50,-40,-30,-30,-30,-40,-50},
-      {-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,8,8,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-20},
+      {-50,-40,-30,-30,-30,-30,-40,-50,-40,-20,0,0,0,0,-20,-40,-30,0,10,15,15,10,0,-30,-30,5,15,20,20,15,5,-30,-30,0,15,20,20,15,0,-30,-40,-20,0,5,5,0,-20,-40,-50,-40,-30,-30,-30,-30,-40,-50},
+      {-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,8,8,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-10,-10,-20},
       {0,0,0,5,5,0,0,0, 0,0,0,5,5,0,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,0,5,5,0,0,0, 0,0,0,5,5,0,0,0},
       {-20,-10,-10,-5,-5,-10,-10,-20, -10,0,0,0,0,0,0,-10, 0,0,5,5,5,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, -10,0,0,0,0,0,0,-10, -20,-10,-10,-5,-5,-10,-10,-20},
       {-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10, 0,-10,-10,-10,-10,-10,-10,0, 20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20}
@@ -547,14 +547,14 @@ class Searcher {
     }
 
     Piece captured_piece(const Move&m) const {
-        if(m.flag()==Move::ENPASSANT)return pos.side==WHITE?BP:BP;
+        if(m.flag()==Move::ENPASSANT)return pos.side==WHITE?BP:WP;
         return pos.b[m.to()];
     }
 
     int non_pawn_material(Color c) const {
         int total=0;
         for(PieceType pt:{KNIGHT,BISHOP,ROOK,QUEEN})
-            total+=popcount(pos.bb[((c==WHITE?1:7)+int(pt))-1])*piece_value[pt];
+            total+=popcount(pos.bb[(c==WHITE?int(pt):int(pt)+6)-1])*piece_value[pt];
         return total;
     }
 
@@ -787,7 +787,7 @@ class Searcher {
             if(null_score>=beta){
                 if(depth<9)return null_score;
 
-                const Score verify=-search(depth-2-reduction,-beta,-beta+1,ply+1,false,Move{});
+                const Score verify=-search(std::max(0,depth-1-reduction),-beta,-beta+1,ply,false,prev_move);
                 if(stop.load())return 0;
                 if(verify>=beta)return null_score;
             }
@@ -967,6 +967,9 @@ public:
                 if(TTEntry*root_entry=tt.probe(pos.key))
                     if(root_entry->depth>=d-1&&root_entry->move)root_hint.data=root_entry->move;
 
+                const Score window_alpha=alpha;
+                const Score window_beta=beta;
+
                 auto root_moves=ordered(legal,root_hint,0,Move{});
                 std::vector<std::pair<Move,Score>> roots;
                 roots.reserve(root_moves.size());
@@ -999,7 +1002,7 @@ public:
                 if(roots.empty())break;
 
                 const Score iteration_score=roots[0].second;
-                if(window>=INF||(iteration_score>alpha&&iteration_score<beta)){
+                if(window>=INF||(iteration_score>window_alpha&&iteration_score<window_beta)){
                     best=roots[0].first;
                     bestscore=iteration_score;
                     accepted=true;
