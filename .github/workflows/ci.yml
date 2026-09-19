@@ -8,4 +8,4 @@ jobs:
       - name: Build
         run: make -j
       - name: Perft suite
-        run: ./tests/perft_suite.sh
+        run: bash ./tests/perft_suite.sh
