@@ -491,47 +491,261 @@ public:
 };
 
 class Searcher {
-    Board &pos; TT tt; std::atomic<bool> stop{false}; std::uint64_t nodes=0; int depth_limit=64; std::chrono::steady_clock::time_point start_time, deadline; bool timed=false; std::uint64_t node_limit=0; std::size_t hash_mb=64; std::vector<Move> restricted_root;
-    Move killers[MAX_PLY][2]{}; int history[2][64][64]{};
+    Board &pos;
+    TT tt;
+    std::atomic<bool> stop{false};
+    std::uint64_t nodes=0;
+    int depth_limit=64;
+    std::chrono::steady_clock::time_point start_time, deadline;
+    bool timed=false;
+    std::uint64_t node_limit=0;
+    std::size_t hash_mb=64;
+    std::vector<Move> restricted_root;
+
+    Move killers[MAX_PLY][2]{};
+    Move counter_moves[2][64][64]{};
+    int history[2][64][64]{};
+
     Score piece_value[7]={0,100,320,330,500,900,0};
+
     const int pst[6][64] = {
       {0,5,5,0,0,5,5,0, 5,10,10,8,8,10,10,5, 3,6,8,12,12,8,6,3, 0,0,2,7,7,2,0,0, 0,0,0,5,5,0,0,0, 2,0,0,-5,-5,0,0,2, 2,4,4,-8,-8,4,4,2, 0,0,0,0,0,0,0,0},
-      {-50,-40,-30,-30,-30,-30,-40,-50,-40,-20,0,0,0,0,-20,-40,-30,0,10,15,15,10,0,-30,-30,5,15,20,20,15,5,-30,-30,0,15,20,20,15,0,-30,-40,-20,0,5,5,0,-20,-40,-50,-40,-30,-30,-30,-30,-40,-50},
-      {-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,8,8,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-10,-10,-20},
+      {-50,-40,-30,-30,-30,-30,-40,-50,-40,-20,0,0,0,0,-20,-40,-40,0,10,15,15,10,0,-30,-30,5,15,20,20,15,5,-30,-30,0,15,20,20,15,0,-30,-40,-20,0,5,5,0,-20,-40,-50,-40,-30,-30,-30,-40,-50},
+      {-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,8,8,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-20},
       {0,0,0,5,5,0,0,0, 0,0,0,5,5,0,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,0,5,5,0,0,0, 0,0,0,5,5,0,0,0},
       {-20,-10,-10,-5,-5,-10,-10,-20, -10,0,0,0,0,0,0,-10, 0,0,5,5,5,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, -10,0,0,0,0,0,0,-10, -20,-10,-10,-5,-5,-10,-10,-20},
       {-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10, 0,-10,-10,-10,-10,-10,-10,0, 20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20}
     };
+
     Score eval() const {
-        Score s=0; for(int sqr=0;sqr<64;sqr++){Piece p=pos.b[sqr];if(!p)continue;int pt=type_of(p);int idx=pt-1;int ps=pos.side==WHITE? pst[idx][sqr] : -pst[idx][sqr^56];Score v=piece_value[pt]+ps; s += (color_of(p)==pos.side?v:-v);} 
-        // Mobility and simple king safety
-        U64 own=pos.occ[pos.side]; U64 attacks=0; int ks=pos.king_square(pos.side); if(ks>=0) attacks|=KingAtt[ks]; s += popcount(attacks&~own)*2; 
-        if(pos.in_check(pos.side)) s-=25;
-        if(pos.in_check(opp(pos.side))) s+=25;
+        Score s=0;
+        for(int sqr=0;sqr<64;sqr++){
+            Piece p=pos.b[sqr];
+            if(!p)continue;
+            int pt=type_of(p),idx=pt-1;
+            int ps=pos.side==WHITE?pst[idx][sqr]:-pst[idx][sqr^56];
+            Score v=piece_value[pt]+ps;
+            s+=(color_of(p)==pos.side?v:-v);
+        }
+        U64 own=pos.occ[pos.side],attacks=0;
+        int ks=pos.king_square(pos.side);
+        if(ks>=0)attacks|=KingAtt[ks];
+        s+=popcount(attacks&~own)*2;
+        if(pos.in_check(pos.side))s-=25;
+        if(pos.in_check(opp(pos.side)))s+=25;
         return s;
     }
-    void touch(){++nodes;if((nodes&2047)==0){if(stop.load())return;if(timed&&std::chrono::steady_clock::now()>=deadline)stop.store(true);if(node_limit&&nodes>=node_limit)stop.store(true);}}
-    bool is_quiet(const Move&m, Piece cap)const{return cap==EMPTY && m.flag()!=Move::PROMOTION && m.flag()!=Move::CASTLE && m.flag()!=Move::ENPASSANT;}
-    int score_move(const Move&m,const Move&ttm,int ply) const {int s=0;if(m==ttm)s+=1000000;Piece cap=pos.b[m.to()];if(m.flag()==Move::ENPASSANT)cap=(pos.side==WHITE?BP:BP);if(cap!=EMPTY)s+=10000+10*piece_value[type_of(cap)]-piece_value[type_of(pos.b[m.from()])];if(m.flag()==Move::PROMOTION)s+=8000+piece_value[m.promo()];if(m==killers[ply][0])s+=9000;if(m==killers[ply][1])s+=8000;s+=history[pos.side][m.from()][m.to()]/32;return s;}
-    std::vector<Move> ordered(const std::vector<Move>&ms,const Move&ttm,int ply) const {std::vector<std::pair<int,Move>> v;v.reserve(ms.size());for(auto&m:ms)v.push_back({score_move(m,ttm,ply),m});std::stable_sort(v.begin(),v.end(),[](auto&a,auto&b){return a.first>b.first;});std::vector<Move> o;o.reserve(ms.size());for(auto&x:v)o.push_back(x.second);return o;}
-    Score quiesce(Score alpha,Score beta,int ply){
-        touch();if(stop.load())return 0;
-        bool chk=pos.in_check(pos.side);
-        auto ms=pos.legal(chk?false:true); // in check, all moves; otherwise captures only
-        if(chk && ms.empty())return -MATE+ply;
-        if(!chk && ms.empty() && pos.legal(false).empty())return 0;
-        if(pos.is_draw_for_search())return 0;
-        Score stand=eval();if(stand>=beta)return beta;if(stand>alpha)alpha=stand;
-        std::vector<Move> caps; caps.reserve(ms.size());for(auto&m:ms){Piece cap=pos.b[m.to()];if(chk||cap!=EMPTY||m.flag()==Move::ENPASSANT||m.flag()==Move::PROMOTION)caps.push_back(m);} 
-        for(auto&m:ordered(caps,Move{},ply)){Undo u;if(!pos.make(m,u))continue;Score sc=-quiesce(-beta,-alpha,ply+1);pos.undo(u);if(stop.load())return 0;if(sc>=beta)return beta;if(sc>alpha)alpha=sc;}return alpha;
+
+    int see_value(PieceType pt) const {
+        static constexpr int values[7]={0,100,320,330,500,900,20000};
+        return values[pt];
     }
-    Score search(int depth,Score alpha,Score beta,int ply,bool allow_null=true){
-        touch();if(stop.load())return 0;if(ply>=MAX_PLY-1)return eval();
-        bool root=(ply==0); bool chk=pos.in_check(pos.side); if(depth<=0)return quiesce(alpha,beta,ply);
+
+    bool is_capture(const Move&m) const {
+        if(m.flag()==Move::ENPASSANT)return true;
+        return pos.b[m.to()]!=EMPTY;
+    }
+
+    Piece captured_piece(const Move&m) const {
+        if(m.flag()==Move::ENPASSANT)return pos.side==WHITE?BP:BP;
+        return pos.b[m.to()];
+    }
+
+    int non_pawn_material(Color c) const {
+        int total=0;
+        for(PieceType pt:{KNIGHT,BISHOP,ROOK,QUEEN})
+            total+=popcount(pos.bb[((c==WHITE?1:7)+int(pt))-1])*piece_value[pt];
+        return total;
+    }
+
+    void touch(){
+        ++nodes;
+        if((nodes&2047)==0){
+            if(stop.load())return;
+            if(timed&&std::chrono::steady_clock::now()>=deadline)stop.store(true);
+            if(node_limit&&nodes>=node_limit)stop.store(true);
+        }
+    }
+
+    bool is_quiet(const Move&m,Piece cap) const {
+        return cap==EMPTY&&m.flag()!=Move::PROMOTION&&m.flag()!=Move::CASTLE&&m.flag()!=Move::ENPASSANT;
+    }
+
+    int see(const Move&m) const {
+        if(!is_capture(m)&&m.flag()!=Move::PROMOTION)return 0;
+
+        U64 pieces[12];
+        std::memcpy(pieces,pos.bb,sizeof(pieces));
+        U64 occupancy=pos.all;
+        const Color us=pos.side;
+        const int from=m.from(),to=m.to();
+
+        Piece moving=pos.b[from];
+        Piece captured=captured_piece(m);
+
+        int capture_sq=to;
+        if(m.flag()==Move::ENPASSANT)capture_sq=to+(us==WHITE?-8:8);
+
+        for(int i=0;i<12;i++)pieces[i]=pos.bb[i];
+        pieces[moving-1]&=~bit(from);
+        occupancy&=~bit(from);
+
+        if(captured){
+            pieces[captured-1]&=~bit(capture_sq);
+            occupancy&=~bit(capture_sq);
+        }
+
+        Piece on_target=moving;
+        int initial_gain=see_value(type_of(captured));
+        if(m.flag()==Move::PROMOTION){
+            Piece promoted=(us==WHITE?Piece(m.promo()):Piece(m.promo()+6));
+            initial_gain+=see_value(type_of(promoted))-see_value(PAWN);
+            on_target=promoted;
+        }
+
+        pieces[on_target-1]|=bit(to);
+        occupancy|=bit(to);
+
+        Score gain[32]{};
+        gain[0]=initial_gain;
+        int depth=0;
+        Color side=opp(us);
+
+        while(depth<31){
+            U64 attackers=0;
+            attackers|=PawnAtt[opp(side)][to]&pieces[(side==WHITE?WP:BP)-1];
+            attackers|=KnightAtt[to]&pieces[(side==WHITE?WN:BN)-1];
+            U64 bishops=pieces[(side==WHITE?WB:BB)-1]|pieces[(side==WHITE?WQ:BQ)-1];
+            U64 rooks=pieces[(side==WHITE?WR:BR)-1]|pieces[(side==WHITE?WQ:BQ)-1];
+            attackers|=bishop_attacks(to,occupancy)&bishops;
+            attackers|=rook_attacks(to,occupancy)&rooks;
+            attackers|=KingAtt[to]&pieces[(side==WHITE?WK:BK)-1];
+
+            Piece attacker=EMPTY;
+            int attacker_sq=-1;
+            for(PieceType pt:{PAWN,KNIGHT,BISHOP,ROOK,QUEEN,KING}){
+                U64 bb_attackers=attackers&pieces[(side==WHITE?int(pt):int(pt)+6)-1];
+                if(bb_attackers){
+                    attacker_sq=__builtin_ctzll(bb_attackers);
+                    attacker=(side==WHITE?Piece(int(pt)):Piece(int(pt)+6));
+                    break;
+                }
+            }
+            if(attacker_sq<0)break;
+
+            ++depth;
+            gain[depth]=see_value(type_of(on_target))-gain[depth-1];
+
+            pieces[on_target-1]&=~bit(to);
+            pieces[attacker-1]&=~bit(attacker_sq);
+            occupancy&=~bit(attacker_sq);
+            pieces[attacker-1]|=bit(to);
+            on_target=attacker;
+            side=opp(side);
+        }
+
+        while(depth>0){
+            --depth;
+            gain[depth]=-std::max(-gain[depth],gain[depth+1]);
+        }
+        return gain[0];
+    }
+
+    int history_value(const Move&m) const {
+        return history[pos.side][m.from()][m.to()];
+    }
+
+    int score_move(const Move&m,const Move&ttm,const Move&counter_move,int ply) const {
+        if(m==ttm)return 1500000;
+
+        Piece cap=captured_piece(m);
+        const bool capture=is_capture(m);
+
+        if(capture){
+            const int exchange=see(m);
+            const int base=exchange>=0?900000:140000;
+            return base+std::clamp(exchange*8,-50000,50000)
+                  +see_value(type_of(cap))/4;
+        }
+
+        if(m.flag()==Move::PROMOTION)
+            return 800000+see_value(PieceType(m.promo()))*4;
+
+        if(m==killers[ply][0])return 700000;
+        if(m==killers[ply][1])return 690000;
+        if(m==counter_move)return 680000;
+
+        return std::clamp(history_value(m),-100000,100000);
+    }
+
+    std::vector<Move> ordered(const std::vector<Move>&ms,const Move&ttm,int ply,const Move&prev_move) const {
+        Move counter_move{};
+        if(prev_move.data)counter_move=counter_moves[pos.side][prev_move.from()][prev_move.to()];
+
+        std::vector<std::pair<int,Move>> scored;
+        scored.reserve(ms.size());
+        for(const auto&m:ms)
+            scored.push_back({score_move(m,ttm,counter_move,ply),m});
+
+        std::stable_sort(scored.begin(),scored.end(),[](const auto&a,const auto&b){return a.first>b.first;});
+
+        std::vector<Move> out;
+        out.reserve(ms.size());
+        for(const auto&x:scored)out.push_back(x.second);
+        return out;
+    }
+
+    Score quiesce(Score alpha,Score beta,int ply){
+        touch();
+        if(stop.load())return 0;
+
+        bool chk=pos.in_check(pos.side);
+        auto ms=pos.legal(chk?false:true);
+        if(chk&&ms.empty())return -MATE+ply;
+        if(!chk&&ms.empty()&&pos.legal(false).empty())return 0;
+        if(pos.is_draw_for_search())return 0;
+
+        Score stand=eval();
+        if(stand>=beta)return beta;
+        if(stand>alpha)alpha=stand;
+
+        std::vector<Move> caps;
+        caps.reserve(ms.size());
+        for(const auto&m:ms){
+            Piece cap=captured_piece(m);
+            if(chk||cap!=EMPTY||m.flag()==Move::ENPASSANT||m.flag()==Move::PROMOTION)
+                caps.push_back(m);
+        }
+
+        for(const auto&m:ordered(caps,Move{},ply,Move{})){
+            Undo u;
+            if(!pos.make(m,u))continue;
+            Score sc=-quiesce(-beta,-alpha,ply+1);
+            pos.undo(u);
+            if(stop.load())return 0;
+            if(sc>=beta)return beta;
+            if(sc>alpha)alpha=sc;
+        }
+        return alpha;
+    }
+
+    Score search(int depth,Score alpha,Score beta,int ply,bool allow_null=true,Move prev_move={}){
+        touch();
+        if(stop.load())return 0;
+        if(ply>=MAX_PLY-1)return eval();
+
+        const bool root=(ply==0);
+        const bool pv_node=(beta-alpha)>1;
+        const bool chk=pos.in_check(pos.side);
+
+        if(depth<=0)return quiesce(alpha,beta,ply);
+
         auto moves=pos.legal();
         if(moves.empty())return chk?(-MATE+ply):0;
         if(pos.is_draw_for_search())return 0;
-        TTEntry *te=tt.probe(pos.key); Move ttm;
+
+        TTEntry* te=tt.probe(pos.key);
+        Move ttm{};
         if(te){
             ttm.data=te->move;
             if(!root&&te->depth>=depth){
@@ -541,19 +755,26 @@ class Searcher {
                 if(te->flag==UPPER&&tt_score<=alpha)return tt_score;
             }
         }
-        Score static_eval=eval();
-        if(!chk&&allow_null&&depth>=3&&static_eval>=beta&&pos.halfmove<120){ // guarded null move
-            Color us=pos.side;
-            int savedEp=pos.ep, savedHalf=pos.halfmove;
-            U64 savedKey=pos.key;
 
+        Score static_eval=eval();
+
+        // Null move is restricted in shallow/low-material positions where
+        // zugzwang is common. Deeper cutoffs are verified without null moves.
+        if(!chk&&allow_null&&depth>=4&&static_eval>=beta&&
+           non_pawn_material(pos.side)>=800&&
+           non_pawn_material(opp(pos.side))>=800){
+            const Color us=pos.side;
+            const int savedEp=pos.ep;
+            const int savedHalf=pos.halfmove;
+            const U64 savedKey=pos.key;
             if(pos.ep>=0)pos.key^=Z.ep[pos.ep];
             pos.ep=-1;
             ++pos.halfmove;
             pos.side=opp(us);
             pos.key^=Z.side;
 
-            Score sc=-search(depth-1-(depth>6?2:1),-beta,-beta+1,ply+1,false);
+            const int reduction=std::min(depth-2,2+depth/4);
+            Score null_score=-search(depth-1-reduction,-beta,-beta+1,ply+1,false,Move{});
 
             pos.side=us;
             pos.key^=Z.side;
@@ -562,63 +783,258 @@ class Searcher {
             pos.key=savedKey;
 
             if(stop.load())return 0;
-            if(sc>=beta)return sc;
+
+            if(null_score>=beta){
+                if(depth<9)return null_score;
+
+                const Score verify=-search(depth-2-reduction,-beta,-beta+1,ply+1,false,Move{});
+                if(stop.load())return 0;
+                if(verify>=beta)return null_score;
+            }
         }
-        if(!chk && depth<=3 && static_eval+120*depth<=alpha){auto q=pos.legal(true); if(q.empty()) return static_eval;}
-        auto om=ordered(moves,ttm,ply); Score orig_alpha=alpha,best=-INF;Move bestm;int move_no=0;
-        for(auto&m:om){Piece cap=pos.b[m.to()];Undo u;if(!pos.make(m,u))continue;bool quiet=is_quiet(m,cap);Score sc;
-            if(move_no==0){sc=-search(depth-1,-beta,-alpha,ply+1,true);}else{int r=0;if(depth>=3&&quiet&&move_no>=4){r=1+(move_no>=8&&depth>=6); } sc=-search(depth-1-r,-alpha-1,-alpha,ply+1,true); if(!stop.load()&&sc>alpha&&sc<beta)sc=-search(depth-1,-beta,-alpha,ply+1,true);} pos.undo(u); if(stop.load())return 0;
-            if(sc>best){best=sc;bestm=m;} if(sc>alpha){alpha=sc;if(quiet){history[pos.side][m.from()][m.to()]=std::clamp(history[pos.side][m.from()][m.to()]+depth*depth, -100000,100000);} } else if(quiet){history[pos.side][m.from()][m.to()]=std::clamp(history[pos.side][m.from()][m.to()]-depth, -100000,100000);}
-            if(alpha>=beta){if(quiet){killers[ply][1]=killers[ply][0];killers[ply][0]=m;}break;} ++move_no;
+
+        Move counter_move{};
+        if(prev_move.data)counter_move=counter_moves[pos.side][prev_move.from()][prev_move.to()];
+        auto om=ordered(moves,ttm,ply,prev_move);
+
+        const Score orig_alpha=alpha;
+        Score best=-INF;
+        Move bestm{};
+        int move_no=0;
+
+        for(const auto&m:om){
+            Piece cap=captured_piece(m);
+            const bool quiet=is_quiet(m,cap);
+            const bool killer_move=(m==killers[ply][0]||m==killers[ply][1]);
+            const bool counter_move_hit=(m==counter_move);
+
+            // Move-level futility pruning: only at shallow non-PV nodes,
+            // never for captures, promotions, killers, or counter-moves.
+            const int futility_margin=90+90*depth;
+            if(!pv_node&&depth<=3&&move_no>0&&quiet&&!killer_move&&!counter_move_hit&&
+               static_eval+futility_margin<=alpha){
+                history[pos.side][m.from()][m.to()]=
+                    std::clamp(history[pos.side][m.from()][m.to()]-depth*depth,-100000,100000);
+                ++move_no;
+                continue;
+            }
+
+            Undo u;
+            if(!pos.make(m,u))continue;
+
+            const bool gives_check=pos.in_check(pos.side);
+            const bool recapture=cap!=EMPTY&&prev_move.data&&m.to()==prev_move.to();
+            const int extension=(gives_check||recapture)?1:0;
+
+            int reduction=0;
+            if(move_no>=3&&quiet&&!gives_check&&!killer_move&&!counter_move_hit){
+                reduction=1;
+                const int hist=history_value(m);
+                if(depth>=6&&move_no>=6)++reduction;
+                if(depth>=9&&move_no>=10)++reduction;
+                if(depth>=12&&move_no>=16)++reduction;
+                if(hist<0)++reduction;
+                if(pv_node)--reduction;
+                reduction=std::clamp(reduction,0,std::max(0,depth-2));
+            }
+
+            const int child_depth=depth-1+extension;
+            Score sc;
+
+            if(move_no==0){
+                sc=-search(child_depth,-beta,-alpha,ply+1,true,m);
+            }else{
+                const int reduced_depth=std::max(0,child_depth-reduction);
+                sc=-search(reduced_depth,-alpha-1,-alpha,ply+1,true,m);
+                if(!stop.load()&&sc>alpha&&sc<beta)
+                    sc=-search(child_depth,-beta,-alpha,ply+1,true,m);
+            }
+
+            pos.undo(u);
+            if(stop.load())return 0;
+
+            const Score old_alpha=alpha;
+            if(sc>best){
+                best=sc;
+                bestm=m;
+            }
+
+            if(sc>alpha){
+                alpha=sc;
+                if(quiet)
+                    history[pos.side][m.from()][m.to()]=
+                        std::clamp(history[pos.side][m.from()][m.to()]+depth*depth*2,-100000,100000);
+            }else if(quiet){
+                history[pos.side][m.from()][m.to()]=
+                    std::clamp(history[pos.side][m.from()][m.to()]-std::max(1,depth),-100000,100000);
+            }
+
+            if(alpha>=beta){
+                if(quiet){
+                    killers[ply][1]=killers[ply][0];
+                    killers[ply][0]=m;
+                    history[pos.side][m.from()][m.to()]=
+                        std::clamp(history[pos.side][m.from()][m.to()]+depth*depth,-100000,100000);
+                    if(prev_move.data)
+                        counter_moves[pos.side][prev_move.from()][prev_move.to()]=m;
+                }
+                break;
+            }
+
+            (void)old_alpha;
+            ++move_no;
         }
-        Bound fl=(best<=orig_alpha?UPPER:(best>=beta?LOWER:EXACT));
-        tt.store(pos.key,depth,score_to_tt(best,ply),fl,bestm,static_eval);
+
+        const Bound bound=(best<=orig_alpha?UPPER:(best>=beta?LOWER:EXACT));
+        tt.store(pos.key,depth,score_to_tt(best,ply),bound,bestm,static_eval);
         return best;
     }
+
 public:
     Searcher(Board&p,std::size_t hash_mb=64):pos(p),tt(hash_mb){}
-    void configure(std::uint64_t ms,std::uint64_t nodes_limit,int depth,const std::vector<Move>& root_filter={}){
-        timed=ms>0; node_limit=nodes_limit; depth_limit=depth; stop.store(false); nodes=0; restricted_root=root_filter;
+
+    void configure(std::uint64_t ms,std::uint64_t nodes_limit,int depth,const std::vector<Move>&root_filter={}){
+        timed=ms>0;
+        node_limit=nodes_limit;
+        depth_limit=depth;
+        stop.store(false);
+        nodes=0;
+        restricted_root=root_filter;
         tt.new_search();
-        start_time=std::chrono::steady_clock::now(); if(timed) deadline=start_time+std::chrono::milliseconds(ms);
+        start_time=std::chrono::steady_clock::now();
+        if(timed)deadline=start_time+std::chrono::milliseconds(ms);
     }
+
     void request_stop(){stop.store(true);}
-    void clear(){tt.resize(hash_mb);std::memset(killers,0,sizeof(killers));std::memset(history,0,sizeof(history));nodes=0;stop.store(false);}
-    void set_hash_mb(std::size_t mb){hash_mb=std::clamp<std::size_t>(mb,1,2048);tt.resize(hash_mb);}
+
+    void clear(){
+        tt.resize(hash_mb);
+        std::memset(killers,0,sizeof(killers));
+        std::memset(counter_moves,0,sizeof(counter_moves));
+        std::memset(history,0,sizeof(history));
+        nodes=0;
+        stop.store(false);
+    }
+
+    void set_hash_mb(std::size_t mb){
+        hash_mb=std::clamp<std::size_t>(mb,1,2048);
+        tt.resize(hash_mb);
+    }
+
     std::uint64_t node_count()const{return nodes;}
     int hashfull()const{return tt.hashfull();}
+
     void debug_reset_nodes(){nodes=0;stop.store(false);}
     TT& debug_tt(){return tt;}
     const TT& debug_tt()const{return tt;}
     Score debug_search(int depth,Score alpha=-INF,Score beta=INF,int ply=0){
-        return search(depth,alpha,beta,ply,true);
+        return search(depth,alpha,beta,ply,true,Move{});
     }
+    int debug_see(const Move&m)const{return see(m);}
+    int debug_move_score(const Move&m,const Move&ttm={},const Move&counter_move={},int ply=0)const{
+        return score_move(m,ttm,counter_move,ply);
+    }
+    std::vector<Move> debug_ordered(const std::vector<Move>&ms,const Move&ttm={},int ply=0,const Move&prev_move={})const{
+        return ordered(ms,ttm,ply,prev_move);
+    }
+
     std::pair<Move,Score> think(){
-        auto all_legal=pos.legal(); if(all_legal.empty())return {Move{},pos.in_check(pos.side)?-MATE:0};
-        std::vector<Move> legal; if(restricted_root.empty()) legal=all_legal; else for(auto&m:all_legal)for(auto&r:restricted_root)if(m==r){legal.push_back(m);break;}
-        if(legal.empty())return {Move{},0};
-        Move best=legal[0]; Score bestscore=-INF;
-        for(int d=1;d<=depth_limit&&!stop.load();d++){
-            std::stable_sort(legal.begin(),legal.end(),[&](const Move&a,const Move&b){return a==best && b!=best;});
-            Score alpha=-INF,beta=INF; std::vector<std::pair<Move,Score>> roots;
-            int index=0;
-            for(auto&m:legal){Undo u;if(!pos.make(m,u))continue;Score sc;
-                if(index==0) sc=-search(d-1,-beta,-alpha,1,true);
-                else { sc=-search(d-1,-alpha-1,-alpha,1,true); if(!stop.load()&&sc>alpha&&sc<beta)sc=-search(d-1,-beta,-alpha,1,true); }
-                pos.undo(u); if(stop.load())break; roots.push_back({m,sc}); if(sc>alpha)alpha=sc; ++index;
-            }
-            if(stop.load()) break;
-            std::stable_sort(roots.begin(),roots.end(),[](auto&a,auto&b){return a.second>b.second;});
-            if(!roots.empty()){best=roots[0].first;bestscore=roots[0].second;}
-            auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start_time).count();
-            std::uint64_t nps=nodes*1000ULL/std::max<long long>(1,ms);
-            std::cout<<"info depth "<<d<<" "<<uci_score(bestscore)<<" nodes "<<nodes<<" nps "<<nps<<" hashfull "<<hashfull()<<" pv "<<move_uci(best)<<"\n"<<std::flush;
+        auto all_legal=pos.legal();
+        if(all_legal.empty())return {Move{},pos.in_check(pos.side)?-MATE:0};
+
+        std::vector<Move> legal;
+        if(restricted_root.empty())legal=all_legal;
+        else{
+            for(const auto&m:all_legal)
+                for(const auto&r:restricted_root)
+                    if(m==r){legal.push_back(m);break;}
         }
+        if(legal.empty())return {Move{},0};
+
+        Move best=legal[0];
+        Score bestscore=-INF;
+
+        for(int d=1;d<=depth_limit&&!stop.load();d++){
+            const Score center=(d==1||bestscore==-INF)?0:bestscore;
+            Score window=(d==1||is_mate_score(bestscore))?INF:50;
+            bool accepted=false;
+
+            while(!stop.load()){
+                Score alpha=(window>=INF)?-INF:std::max<Score>(-INF,center-window);
+                Score beta=(window>=INF)?INF:std::min<Score>(INF,center+window);
+
+                Move root_hint=best;
+                if(TTEntry*root_entry=tt.probe(pos.key))
+                    if(root_entry->depth>=d-1&&root_entry->move)root_hint.data=root_entry->move;
+
+                auto root_moves=ordered(legal,root_hint,0,Move{});
+                std::vector<std::pair<Move,Score>> roots;
+                roots.reserve(root_moves.size());
+
+                int index=0;
+                for(const auto&m:root_moves){
+                    Undo u;
+                    if(!pos.make(m,u))continue;
+
+                    Score sc;
+                    if(index==0)
+                        sc=-search(d-1,-beta,-alpha,1,true,m);
+                    else{
+                        sc=-search(d-1,-alpha-1,-alpha,1,true,m);
+                        if(!stop.load()&&sc>alpha&&sc<beta)
+                            sc=-search(d-1,-beta,-alpha,1,true,m);
+                    }
+
+                    pos.undo(u);
+                    if(stop.load())break;
+                    roots.push_back({m,sc});
+
+                    if(sc>alpha)alpha=sc;
+                    ++index;
+                }
+
+                if(stop.load())break;
+
+                std::stable_sort(roots.begin(),roots.end(),[](const auto&a,const auto&b){return a.second>b.second;});
+                if(roots.empty())break;
+
+                const Score iteration_score=roots[0].second;
+                if(window>=INF||(iteration_score>alpha&&iteration_score<beta)){
+                    best=roots[0].first;
+                    bestscore=iteration_score;
+                    accepted=true;
+                    break;
+                }
+
+                window*=2;
+                if(window>=4000)window=INF;
+            }
+
+            if(stop.load()||!accepted)break;
+
+            auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now()-start_time).count();
+            std::uint64_t nps=nodes*1000ULL/std::max<long long>(1,ms);
+            std::cout<<"info depth "<<d<<" "<<uci_score(bestscore)<<" nodes "<<nodes
+                     <<" nps "<<nps<<" hashfull "<<hashfull()<<" pv "<<move_uci(best)<<"\n"<<std::flush;
+        }
+
         return {best,bestscore};
     }
-    std::uint64_t perft(int depth){if(depth==0)return 1;auto ms=pos.legal();std::uint64_t n=0;for(auto&m:ms){Undo u;if(!pos.make(m,u))continue;n+=perft(depth-1);pos.undo(u);}return n;}
-};
 
+    std::uint64_t perft(int depth){
+        if(depth==0)return 1;
+        auto ms=pos.legal();
+        std::uint64_t n=0;
+        for(const auto&m:ms){
+            Undo u;
+            if(!pos.make(m,u))continue;
+            n+=perft(depth-1);
+            pos.undo(u);
+        }
+        return n;
+    }
+};
 static void print_board(const Board&p){for(int r=7;r>=0;r--){std::cout<<r+1<<" ";for(int f=0;f<8;f++){Piece pc=p.b[sq(f,r)];const char* chars=" PNBRQKpnbrqk";std::cout<<chars[pc]<<' ';}std::cout<<'\n';}std::cout<<"  a b c d e f g h\n";}
 
 struct GoLimits {int depth=0;std::uint64_t movetime=0,wtime=0,btime=0,winc=0,binc=0,nodes=0;int movestogo=0;bool infinite=false;std::vector<std::string> searchmoves;};
