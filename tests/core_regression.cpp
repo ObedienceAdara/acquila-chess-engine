@@ -312,17 +312,17 @@ void test_see_and_move_ordering() {
     const int losing_score=losing_search.debug_move_score(losing_capture);
     require(winning_score>losing_score, "winning SEE capture was not ordered above losing capture");
 
-    const auto moves=promotion.legal();
+    const Move quiet=find_uci(promotion,"a1b1");
+    require(quiet.data!=0, "quiet move missing from promotion ordering fixture");
     const int promotion_score=promotion_search.debug_move_score(promote);
-    const Move killer=moves.front();
-    const int killer_score=promotion_search.debug_move_score(killer,Move{},Move{},0);
-    require(promotion_score>killer_score, "promotion was not ordered above quiet moves");
+    const int quiet_score=promotion_search.debug_move_score(quiet);
+    require(promotion_score>quiet_score, "promotion was not ordered above quiet moves");
 
-    const int tt_score=promotion_search.debug_move_score(killer,killer,Move{},0);
+    const int tt_score=promotion_search.debug_move_score(quiet,quiet,Move{},0);
     require(tt_score>promotion_score, "TT move was not given highest priority");
 
-    const int counter_score=promotion_search.debug_move_score(killer,Move{},killer,0);
-    require(counter_score>killer_score, "counter-move priority was not applied");
+    const int counter_score=promotion_search.debug_move_score(quiet,Move{},quiet,0);
+    require(counter_score>quiet_score, "counter-move priority was not applied");
 }
 
 void test_mate_tt_normalization() {
