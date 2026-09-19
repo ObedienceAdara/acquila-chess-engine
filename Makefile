@@ -17,7 +17,7 @@ asan:
 	$(CXX) -std=c++17 -O1 -g -fsanitize=address,undefined -Wall -Wextra $(SRC) -o $(TARGET)-asan
 
 test: $(TARGET)
-	./tests/perft_suite.sh
+	bash ./tests/perft_suite.sh
 
 clean:
 	rm -f $(TARGET) $(PORTABLE) $(TARGET)-asan
