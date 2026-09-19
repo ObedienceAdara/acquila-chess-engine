@@ -148,6 +148,136 @@ void test_draw_rules() {
             "75-move threshold incorrectly masked checkmate");
 }
 
+void test_incremental_hash_special_moves() {
+    auto check = [](Board& board, const std::vector<std::string>& moves, const std::string& label) {
+        require(board.is_consistent(), label + ": initial invariant failed");
+        for (const auto& uci : moves) {
+            apply_uci(board, uci);
+            require(board.is_consistent(), label + ": incremental Zobrist mismatch after " + uci);
+            require(board.key == board.compute_key(), label + ": canonical key mismatch after " + uci);
+        }
+    };
+
+    Board normal;
+    check(normal, {"e2e4", "e7e5", "g1f3", "b8c6", "f1b5"}, "normal/castling preparation");
+
+    Board castle;
+    check(castle, {"e2e4", "e7e5", "g1f3", "b8c6", "f1e2", "g8f6", "e1g1"}, "castling");
+
+    Board en_passant;
+    en_passant.set_fen("7k/8/8/3pP3/8/8/8/K7 w - d6 0 1");
+    check(en_passant, {"e5d6"}, "en-passant");
+
+    Board promotion;
+    promotion.set_fen("7k/P7/8/8/8/8/8/K7 w - - 0 1");
+    check(promotion, {"a7a8q"}, "promotion");
+
+    Board capture;
+    capture.set_fen("7k/8/8/3p4/8/8/2P5/K6R w - - 0 1");
+    check(capture, {"c2d3"}, "capture");
+}
+
+void test_tt_cluster_and_replacement() {
+    TT tt(1);
+    require(TT::cluster_size() == 4, "TT cluster size is not four");
+    const U64 stride = static_cast<U64>(tt.bucket_count());
+    const Move dummy = Move::make(0, 1);
+
+    const U64 k[5] = {
+        stride * 1ULL, stride * 2ULL, stride * 3ULL, stride * 4ULL, stride * 5ULL
+    };
+
+    for (int i = 0; i < 4; ++i)
+        tt.store(k[i], 4 + i * 4, 100 + i, EXACT, dummy, 50 + i);
+
+    for (int i = 0; i < 4; ++i) {
+        const TTEntry* e = tt.probe(k[i]);
+        require(e != nullptr, "TT cluster lost an inserted entry");
+        require(e->depth == 4 + i * 4, "TT stored depth mismatch");
+        require(e->flag == EXACT, "TT stored bound mismatch");
+        require(e->move == dummy.data, "TT stored move mismatch");
+        require(e->eval == 50 + i, "TT stored static eval mismatch");
+    }
+
+    tt.store(k[4], 20, 999, LOWER, dummy, 77);
+    require(tt.probe(k[0]) == nullptr, "deep replacement did not evict shallowest entry");
+    require(tt.probe(k[4]) != nullptr, "replacement entry was not stored");
+
+    TT aged(1);
+    const U64 a[5] = {
+        stride * 11ULL, stride * 12ULL, stride * 13ULL, stride * 14ULL, stride * 15ULL
+    };
+    for (int i = 0; i < 4; ++i) aged.store(a[i], 20, i, EXACT, dummy, 0);
+    aged.new_search();
+    aged.new_search();
+    aged.new_search();
+    aged.store(a[4], 1, 99, LOWER, dummy, 0);
+    require(aged.probe(a[0]) == nullptr, "aged TT entry was not replaced");
+    require(aged.probe(a[4]) != nullptr, "new aged replacement was not stored");
+
+    const TTEntry* retained = aged.probe(a[4]);
+    require(retained->generation == 3, "TT generation was not advanced for new search");
+}
+
+void test_tt_semantics() {
+    Board board;
+    Searcher searcher(board);
+    constexpr int depth = 3;
+
+    const Score exact = searcher.debug_search(depth, -INF, INF, 0);
+    const TTEntry* exact_entry = searcher.debug_tt().probe(board.key);
+    require(exact_entry != nullptr, "exact root search did not store TT entry");
+    require(exact_entry->flag == EXACT, "exact search stored wrong TT bound");
+    require(exact_entry->depth == depth, "exact search stored wrong TT depth");
+    require(score_from_tt(exact_entry->score, 0) == exact, "exact TT score mismatch");
+
+    searcher.debug_reset_nodes();
+    const Score cached = searcher.debug_search(depth - 1, -INF, INF, 1);
+    require(cached == exact, "depth-qualified TT exact lookup returned wrong score");
+    require(searcher.node_count() == 1, "TT exact cutoff still searched the tree");
+
+    searcher.clear();
+    searcher.debug_search(depth - 1, -INF, INF, 0);
+    searcher.debug_reset_nodes();
+    searcher.debug_search(depth, -INF, INF, 1);
+    require(searcher.node_count() > 1, "shallower TT entry incorrectly cut off deeper search");
+
+    searcher.clear();
+    searcher.debug_search(depth, exact - 1, exact, 0);
+    const TTEntry* lower = searcher.debug_tt().probe(board.key);
+    require(lower != nullptr && lower->flag == LOWER, "lower-bound search did not store LOWER");
+    searcher.debug_reset_nodes();
+    const Score lower_cutoff = searcher.debug_search(depth, exact - 1, exact, 1);
+    require(lower_cutoff == exact, "LOWER TT cutoff returned wrong score");
+    require(searcher.node_count() == 1, "LOWER TT bound did not cut off search");
+
+    searcher.clear();
+    searcher.debug_search(depth, exact, exact + 1, 0);
+    const TTEntry* upper = searcher.debug_tt().probe(board.key);
+    require(upper != nullptr && upper->flag == UPPER, "upper-bound search did not store UPPER");
+    searcher.debug_reset_nodes();
+    const Score upper_cutoff = searcher.debug_search(depth, exact, exact + 1, 1);
+    require(upper_cutoff == exact, "UPPER TT cutoff returned wrong score");
+    require(searcher.node_count() == 1, "UPPER TT bound did not cut off search");
+
+    searcher.clear();
+    searcher.debug_search(depth, -INF, INF, 0);
+    searcher.debug_reset_nodes();
+    const Score repeated_root = searcher.debug_search(depth, -INF, INF, 0);
+    require(repeated_root == exact, "repeated root search changed its result");
+    require(searcher.node_count() > 1, "root TT entry incorrectly caused a root cutoff");
+
+    TT mate_tt(1);
+    const U64 mate_key = 0x123456789ULL;
+    const Move dummy = Move::make(0, 1);
+    const Score mate_score = MATE - 6;
+    mate_tt.store(mate_key, 8, score_to_tt(mate_score, 5), EXACT, dummy, 0);
+    const TTEntry* me = mate_tt.probe(mate_key);
+    require(me != nullptr, "mate TT entry missing");
+    require(score_from_tt(me->score, 5) == mate_score, "mate score failed same-ply round trip");
+    require(score_from_tt(me->score, 9) == mate_score - 4, "mate score failed cross-ply normalization");
+}
+
 void test_mate_tt_normalization() {
     Board mate;
     mate.set_fen("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1");
@@ -174,7 +304,10 @@ int main() {
         init_attacks();
         test_perft();
         test_make_unmake_and_zobrist();
+        test_incremental_hash_special_moves();
         test_draw_rules();
+        test_tt_cluster_and_replacement();
+        test_tt_semantics();
         test_mate_tt_normalization();
         test_uci_score_formatting();
         std::cout << "core regression tests: PASS\n";
