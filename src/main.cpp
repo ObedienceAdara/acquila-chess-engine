@@ -218,27 +218,83 @@ public:
     }
     bool in_check(Color c) const { int k=king_square(c); return k>=0 && attacked(k,opp(c)); }
     bool make(const Move&m,Undo&u){
-        u={key,castle,ep,halfmove,fullmove,EMPTY,m}; Piece p=b[m.from()]; if(!p || color_of(p)!=side)return false;
-        int from=m.from(),to=m.to(); Piece captured=EMPTY;
-        if(m.flag()==Move::ENPASSANT){int cs=to+(side==WHITE?-8:8);captured=b[cs];remove(cs);} else captured=b[to];
+        u={key,castle,ep,halfmove,fullmove,EMPTY,m};
+        Piece p=b[m.from()];
+        if(!p || color_of(p)!=side)return false;
+
+        const Color us=side;
+        const int from=m.from(),to=m.to();
+        int capture_sq=to;
+
+        // Remove reversible state from the key before mutating it.
+        key ^= Z.castle[castle];
+        if(ep>=0)key ^= Z.ep[ep];
+
+        // Move the piece out of its source square.
+        key ^= Z.piece[p-1][from];
+        remove(from);
+
+        Piece captured=EMPTY;
+        if(m.flag()==Move::ENPASSANT){
+            capture_sq=to+(us==WHITE?-8:8);
+            captured=b[capture_sq];
+        }else{
+            captured=b[to];
+        }
         u.captured=captured;
-        remove(from); if(captured)remove(to);
+
+        if(captured){
+            key ^= Z.piece[captured-1][capture_sq];
+            remove(capture_sq);
+        }
+
         if(m.flag()==Move::CASTLE){
-            put(to,p); int rf=-1,rt=-1; if(side==WHITE&&to==sq(6,0)){rf=sq(7,0);rt=sq(5,0);} if(side==WHITE&&to==sq(2,0)){rf=sq(0,0);rt=sq(3,0);} if(side==BLACK&&to==sq(6,7)){rf=sq(7,7);rt=sq(5,7);} if(side==BLACK&&to==sq(2,7)){rf=sq(0,7);rt=sq(3,7);} Piece rp=b[rf]; remove(rf); put(rt,rp);
-        } else if(m.flag()==Move::PROMOTION){ Piece np=(side==WHITE?Piece(m.promo()):Piece(m.promo()+6)); put(to,np); }
-        else put(to,p);
-        // castle rights from king/rook moves and rook captures
+            put(to,p);
+            key ^= Z.piece[p-1][to];
+
+            int rf=-1,rt=-1;
+            if(us==WHITE&&to==sq(6,0)){rf=sq(7,0);rt=sq(5,0);}
+            if(us==WHITE&&to==sq(2,0)){rf=sq(0,0);rt=sq(3,0);}
+            if(us==BLACK&&to==sq(6,7)){rf=sq(7,7);rt=sq(5,7);}
+            if(us==BLACK&&to==sq(2,7)){rf=sq(0,7);rt=sq(3,7);}
+
+            Piece rp=b[rf];
+            key ^= Z.piece[rp-1][rf];
+            remove(rf);
+            put(rt,rp);
+            key ^= Z.piece[rp-1][rt];
+        }else if(m.flag()==Move::PROMOTION){
+            Piece np=(us==WHITE?Piece(m.promo()):Piece(m.promo()+6));
+            put(to,np);
+            key ^= Z.piece[np-1][to];
+        }else{
+            put(to,p);
+            key ^= Z.piece[p-1][to];
+        }
+
         auto clear_sq=[&](int s){
             if(s==sq(0,0)) castle &= ~WQCA;
             if(s==sq(7,0)) castle &= ~WKCA;
             if(s==sq(0,7)) castle &= ~BQCA;
             if(s==sq(7,7)) castle &= ~BKCA;
         };
-        if(type_of(p)==KING){castle &= (side==WHITE?~(WKCA|WQCA):~(BKCA|BQCA));}
-        if(type_of(p)==ROOK) clear_sq(from);
-        if(captured && type_of(captured)==ROOK) clear_sq(to); 
-        if(ep>=0){} ep=-1; if(m.flag()==Move::DOUBLE_PUSH)ep=from+(side==WHITE?8:-8);
-        if(type_of(p)==PAWN || captured)halfmove=0; else ++halfmove; if(side==BLACK)++fullmove; side=opp(side); key=compute_key(); history.push_back(key); return true;
+        if(type_of(p)==KING)castle &= (us==WHITE?~(WKCA|WQCA):~(BKCA|BQCA));
+        if(type_of(p)==ROOK)clear_sq(from);
+        if(captured&&type_of(captured)==ROOK)clear_sq(capture_sq);
+
+        ep=-1;
+        if(m.flag()==Move::DOUBLE_PUSH)ep=from+(us==WHITE?8:-8);
+        if(type_of(p)==PAWN||captured)halfmove=0;
+        else ++halfmove;
+        if(us==BLACK)++fullmove;
+
+        side=opp(us);
+        key ^= Z.side;
+        key ^= Z.castle[castle];
+        if(ep>=0)key ^= Z.ep[ep];
+
+        history.push_back(key);
+        return true;
     }
     void undo(const Undo&u){
         side=opp(side); fullmove=u.fullmove; castle=u.castle; ep=u.ep; halfmove=u.halfmove; 
@@ -335,18 +391,104 @@ public:
     std::vector<Move> legal_no_mutation(bool captures_only=false) const { Board tmp=*this; return tmp.legal(captures_only); }
 };
 
-struct TTEntry { U64 key=0; int depth=-1; Score score=0; Score eval=0; std::uint8_t flag=0; std::uint32_t move=0; };
-class TT {
-    std::vector<TTEntry> t; U64 mask=0;
-public:
-    explicit TT(std::size_t mb=64){resize(mb);}
-    void resize(std::size_t mb){std::size_t n=1;std::size_t bytes=mb*1024ULL*1024ULL;while(n*sizeof(TTEntry)*2<=bytes)n<<=1;t.assign(n,{});mask=n-1;}
-    TTEntry* probe(U64 k){return &t[k&mask];}
-    void store(U64 k,int d,Score s,std::uint8_t fl,Move m,Score ev){auto&e=t[k&mask];if(e.key!=k||d>=e.depth){e={k,d,s,ev,fl,m.data};}}
-    int hashfull(){int n=std::min<size_t>(1000,t.size()),x=0;for(int i=0;i<n;i++)if(t[i].key)x++;return x*1000/n;}
+enum Bound : std::uint8_t { EXACT=1, LOWER=2, UPPER=3 };
+
+struct TTEntry {
+    U64 key=0;
+    int depth=-1;
+    Score score=0;
+    Score eval=0;
+    std::uint8_t flag=0;
+    std::uint8_t generation=0;
+    std::uint32_t move=0;
 };
 
-enum Bound { EXACT=1, LOWER=2, UPPER=3 };
+class TT {
+    static constexpr int CLUSTER_SIZE=4;
+    using Bucket=std::array<TTEntry,CLUSTER_SIZE>;
+
+    std::vector<Bucket> table;
+    U64 mask=0;
+    std::uint8_t generation=0;
+
+    int replacement_score(const TTEntry&e) const {
+        if(e.depth<0)return -1000000;
+        const int age=static_cast<std::uint8_t>(generation-e.generation);
+        return e.depth-8*age;
+    }
+
+public:
+    explicit TT(std::size_t mb=64){resize(mb);}
+
+    void resize(std::size_t mb){
+        std::size_t n=1;
+        const std::size_t bytes=mb*1024ULL*1024ULL;
+        const std::size_t max_buckets=std::max<std::size_t>(1,bytes/sizeof(Bucket));
+        while(n<=max_buckets/2)n<<=1;
+        table.assign(n,{});
+        mask=n-1;
+        generation=0;
+    }
+
+    void new_search(){++generation;}
+
+    void clear(){
+        std::fill(table.begin(),table.end(),Bucket{});
+        generation=0;
+    }
+
+    std::size_t bucket_count() const{return table.size();}
+    static constexpr int cluster_size(){return CLUSTER_SIZE;}
+
+    TTEntry* probe(U64 k){
+        auto&bucket=table[k&mask];
+        for(auto&e:bucket)if(e.depth>=0&&e.key==k)return &e;
+        return nullptr;
+    }
+
+    const TTEntry* probe(U64 k) const{
+        const auto&bucket=table[k&mask];
+        for(const auto&e:bucket)if(e.depth>=0&&e.key==k)return &e;
+        return nullptr;
+    }
+
+    void store(U64 k,int d,Score s,Bound fl,Move m,Score ev){
+        auto&bucket=table[k&mask];
+
+        for(auto&e:bucket){
+            if(e.depth>=0&&e.key==k){
+                // Refresh the entry's age even when a shallower result does
+                // not replace a deeper one.
+                e.generation=generation;
+                if(d>=e.depth)e={k,d,s,ev,static_cast<std::uint8_t>(fl),generation,m.data};
+                return;
+            }
+        }
+
+        TTEntry* victim=&bucket[0];
+        for(auto&e:bucket){
+            if(e.depth<0){victim=&e;break;}
+            if(replacement_score(e)<replacement_score(*victim))victim=&e;
+        }
+
+        *victim={k,d,s,ev,static_cast<std::uint8_t>(fl),generation,m.data};
+    }
+
+    int hashfull() const{
+        const std::size_t sample=std::min<std::size_t>(1000,table.size()*CLUSTER_SIZE);
+        if(!sample)return 0;
+
+        std::size_t seen=0,used=0;
+        for(const auto&bucket:table){
+            for(const auto&e:bucket){
+                if(e.depth>=0&&e.generation==generation)++used;
+                if(++seen>=sample)break;
+            }
+            if(seen>=sample)break;
+        }
+        return static_cast<int>((used*1000)/sample);
+    }
+};
 
 class Searcher {
     Board &pos; TT tt; std::atomic<bool> stop{false}; std::uint64_t nodes=0; int depth_limit=64; std::chrono::steady_clock::time_point start_time, deadline; bool timed=false; std::uint64_t node_limit=0; std::size_t hash_mb=64; std::vector<Move> restricted_root;
@@ -390,7 +532,7 @@ class Searcher {
         if(moves.empty())return chk?(-MATE+ply):0;
         if(pos.is_draw_for_search())return 0;
         TTEntry *te=tt.probe(pos.key); Move ttm;
-        if(te->key==pos.key){
+        if(te){
             ttm.data=te->move;
             if(!root&&te->depth>=depth){
                 Score tt_score=score_from_tt(te->score,ply);
@@ -401,7 +543,26 @@ class Searcher {
         }
         Score static_eval=eval();
         if(!chk&&allow_null&&depth>=3&&static_eval>=beta&&pos.halfmove<120){ // guarded null move
-            Color us=pos.side; int savedEp=pos.ep, savedHalf=pos.halfmove; U64 savedKey=pos.key; pos.side=opp(us); pos.ep=-1; ++pos.halfmove; pos.key=pos.compute_key(); Score sc=-search(depth-1-(depth>6?2:1),-beta,-beta+1,ply+1,false); pos.side=us; pos.ep=savedEp; pos.halfmove=savedHalf; pos.key=savedKey; if(stop.load())return 0; if(sc>=beta)return sc;
+            Color us=pos.side;
+            int savedEp=pos.ep, savedHalf=pos.halfmove;
+            U64 savedKey=pos.key;
+
+            if(pos.ep>=0)pos.key^=Z.ep[pos.ep];
+            pos.ep=-1;
+            ++pos.halfmove;
+            pos.side=opp(us);
+            pos.key^=Z.side;
+
+            Score sc=-search(depth-1-(depth>6?2:1),-beta,-beta+1,ply+1,false);
+
+            pos.side=us;
+            pos.key^=Z.side;
+            pos.ep=savedEp;
+            pos.halfmove=savedHalf;
+            pos.key=savedKey;
+
+            if(stop.load())return 0;
+            if(sc>=beta)return sc;
         }
         if(!chk && depth<=3 && static_eval+120*depth<=alpha){auto q=pos.legal(true); if(q.empty()) return static_eval;}
         auto om=ordered(moves,ttm,ply); Score orig_alpha=alpha,best=-INF;Move bestm;int move_no=0;
@@ -418,13 +579,17 @@ public:
     Searcher(Board&p,std::size_t hash_mb=64):pos(p),tt(hash_mb){}
     void configure(std::uint64_t ms,std::uint64_t nodes_limit,int depth,const std::vector<Move>& root_filter={}){
         timed=ms>0; node_limit=nodes_limit; depth_limit=depth; stop.store(false); nodes=0; restricted_root=root_filter;
+        tt.new_search();
         start_time=std::chrono::steady_clock::now(); if(timed) deadline=start_time+std::chrono::milliseconds(ms);
     }
     void request_stop(){stop.store(true);}
-    void clear(){tt.resize(hash_mb);std::memset(killers,0,sizeof(killers));std::memset(history,0,sizeof(history));}
+    void clear(){tt.resize(hash_mb);std::memset(killers,0,sizeof(killers));std::memset(history,0,sizeof(history));nodes=0;stop.store(false);}
     void set_hash_mb(std::size_t mb){hash_mb=std::clamp<std::size_t>(mb,1,2048);tt.resize(hash_mb);}
     std::uint64_t node_count()const{return nodes;}
-    int hashfull()const{return const_cast<TT&>(tt).hashfull();}
+    int hashfull()const{return tt.hashfull();}
+    void debug_reset_nodes(){nodes=0;stop.store(false);}
+    TT& debug_tt(){return tt;}
+    const TT& debug_tt()const{return tt;}
     Score debug_search(int depth,Score alpha=-INF,Score beta=INF,int ply=0){
         return search(depth,alpha,beta,ply,true);
     }
