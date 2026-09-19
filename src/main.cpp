@@ -662,10 +662,18 @@ class Searcher {
             const bool supported=is_pawn_supported(c,s,own_pawns);
             if(supported)add(5,8);
 
-            if(f>0 && (own_pawns&FileMask[f-1]) &&
-               ((own_pawns&FileMask[f-1]) & RankMask[r]))add(5,7);
-            if(f<7 && (own_pawns&FileMask[f+1]) &&
-               ((own_pawns&FileMask[f+1]) & RankMask[r]))add(5,7);
+            bool connected=false;
+            for(int ff=std::max(0,f-1);ff<=std::min(7,f+1);ff++){
+                if(ff==f)continue;
+                U64 q=own_pawns&FileMask[ff];
+                while(q){
+                    const int ps=poplsb(q);
+                    const int dr=rank_of(ps)>r?rank_of(ps)-r:r-rank_of(ps);
+                    if(dr<=1){connected=true;break;}
+                }
+                if(connected)break;
+            }
+            if(connected)add(5,7);
 
             const bool passed=is_passed_pawn(c,s,enemy_pawns);
             if(passed){
@@ -827,7 +835,8 @@ class Searcher {
             }
             add(safe_king_squares*2,safe_king_squares*6);
 
-            add(-center_distance(ks),12-center_distance(ks)*2);
+            const int kd=center_distance(ks);
+            add(-std::max(0,6-kd)*2,(7-kd)*4);
         }
 
         const U64 center=bit(sq(3,3))|bit(sq(4,3))|bit(sq(3,4))|bit(sq(4,4));
@@ -869,18 +878,6 @@ class Searcher {
             mg+=sign*(eval_mg_value[idx]+mg_ps);
             eg+=sign*(eval_eg_value[idx]+eg_ps);
             phase+=phase_value[idx];
-        }
-
-        const int wk=pos.king_square(WHITE),bk=pos.king_square(BLACK);
-        if(wk>=0){
-            const int c=center_distance(wk);
-            mg+=(0-c);
-            eg+=(12-c*2);
-        }
-        if(bk>=0){
-            const int c=center_distance(bk);
-            mg-=(0-c);
-            eg-=(12-c*2);
         }
 
         evaluate_side_terms(WHITE,mg,eg);
@@ -1070,6 +1067,7 @@ class Searcher {
 
         const bool chk=pos.in_check(pos.side);
         if(pos.is_draw_for_search())return 0;
+        if(ply>=MAX_PLY-1)return chk?eval():eval();
 
         auto legal_moves=pos.legal(false);
         if(legal_moves.empty())return chk?(-MATE+ply):0;
@@ -1111,19 +1109,19 @@ class Searcher {
             const bool promotion=m.flag()==Move::PROMOTION;
 
             if(capture||promotion){
-                if(capture&&see(m)<0){
-                    Undo u;
-                    if(!pos.make(m,u))continue;
-                    const bool check_after=pos.in_check(pos.side);
-                    pos.undo(u);
-                    if(!check_after)continue;
-                    candidates.push_back({m,2,700000,true});
-                    continue;
-                }
+                const int exchange=see(m);
+                Undo u;
+                if(!pos.make(m,u))continue;
+                const bool check_after=pos.in_check(pos.side);
+                pos.undo(u);
+
+                if(capture&&exchange<0&&!check_after)continue;
+
                 int score=promotion?800000:900000;
-                score+=std::clamp(see(m)*8,-40000,40000);
+                score+=std::clamp(exchange*8,-40000,40000);
                 if(cap!=EMPTY)score+=see_value(type_of(cap));
-                candidates.push_back({m,promotion&&!capture?1:0,score,false});
+                const int category=(promotion&&!capture)?1:0;
+                candidates.push_back({m,category,score,check_after});
                 continue;
             }
 
