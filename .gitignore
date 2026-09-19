@@ -1,0 +1,13 @@
+# Build artifacts
+aquila
+aquila-portable
+aquila-asan
+*.o
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Generated training data
+dataset.csv
