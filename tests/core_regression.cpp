@@ -242,28 +242,31 @@ void test_tt_semantics() {
     searcher.debug_search(depth, -INF, INF, 1);
     require(searcher.node_count() > 1, "shallower TT entry incorrectly cut off deeper search");
 
+    const Move bound_move = Move::make(12, 28);
+
     searcher.clear();
-    constexpr Score lower_alpha = -INF;
-    constexpr Score lower_beta = -INF + 1;
-    const Score lower_result = searcher.debug_search(depth, lower_alpha, lower_beta, 0);
+    constexpr Score lower_score = 500;
+    searcher.debug_tt().store(board.key, depth, score_to_tt(lower_score, 1), LOWER, bound_move, 17);
     const TTEntry* lower = searcher.debug_tt().probe(board.key);
-    require(lower != nullptr && lower->flag == LOWER, "lower-bound search did not store LOWER");
+    require(lower != nullptr && lower->flag == LOWER, "lower-bound entry was not stored");
+    require(lower->depth == depth, "lower-bound depth mismatch");
+    require(lower->move == bound_move.data, "lower-bound move mismatch");
     searcher.debug_reset_nodes();
-    const Score lower_cutoff = searcher.debug_search(depth, lower_alpha, lower_beta, 1);
-    require(lower_cutoff == lower_result, "LOWER TT cutoff returned wrong score");
-    require(lower_cutoff >= lower_beta, "LOWER TT cutoff violated its bound");
+    const Score lower_cutoff = searcher.debug_search(depth, 400, 500, 1);
+    require(lower_cutoff == lower_score, "LOWER TT cutoff returned wrong score");
+    require(lower_cutoff >= 500, "LOWER TT cutoff violated its bound");
     require(searcher.node_count() == 1, "LOWER TT bound did not cut off search");
 
     searcher.clear();
-    constexpr Score upper_alpha = INF - 1;
-    constexpr Score upper_beta = INF;
-    const Score upper_result = searcher.debug_search(depth, upper_alpha, upper_beta, 0);
+    constexpr Score upper_score = -500;
+    searcher.debug_tt().store(board.key, depth, score_to_tt(upper_score, 1), UPPER, bound_move, -17);
     const TTEntry* upper = searcher.debug_tt().probe(board.key);
-    require(upper != nullptr && upper->flag == UPPER, "upper-bound search did not store UPPER");
+    require(upper != nullptr && upper->flag == UPPER, "upper-bound entry was not stored");
+    require(upper->depth == depth, "upper-bound depth mismatch");
     searcher.debug_reset_nodes();
-    const Score upper_cutoff = searcher.debug_search(depth, upper_alpha, upper_beta, 1);
-    require(upper_cutoff == upper_result, "UPPER TT cutoff returned wrong score");
-    require(upper_cutoff <= upper_alpha, "UPPER TT cutoff violated its bound");
+    const Score upper_cutoff = searcher.debug_search(depth, -500, -400, 1);
+    require(upper_cutoff == upper_score, "UPPER TT cutoff returned wrong score");
+    require(upper_cutoff <= -500, "UPPER TT cutoff violated its bound");
     require(searcher.node_count() == 1, "UPPER TT bound did not cut off search");
 
     searcher.clear();
