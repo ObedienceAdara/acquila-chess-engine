@@ -2,7 +2,7 @@
 
 Aquila is a standalone C++17 chess engine built from scratch as an engineering foundation for progressively stronger search, evaluation, and performance work. It speaks the Universal Chess Interface (UCI), includes a verified legal move generator, and is structured for continuous benchmarking and improvement.
 
-> **Status:** v0.1 foundation. Aquila is not currently claimed to be Stockfish-strength.
+> **Status:** v0.2 correctness + search-state foundation. Aquila is not currently claimed to be Stockfish-strength.
 
 ## Highlights
 
