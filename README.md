@@ -2,7 +2,7 @@
 
 Aquila is a standalone C++17 chess engine built from scratch as an engineering foundation for progressively stronger search, evaluation, and performance work. It speaks the Universal Chess Interface (UCI), includes a verified legal move generator, and is structured for continuous benchmarking and improvement.
 
-> **Status:** v0.2 correctness + search-state foundation. Aquila is not currently claimed to be Stockfish-strength.
+> **Status:** v0.3 move ordering + search-heuristics foundation. Aquila is not currently claimed to be Stockfish-strength.
 
 ## Highlights
 
@@ -14,8 +14,8 @@ Aquila is a standalone C++17 chess engine built from scratch as an engineering f
 - Separate claimable/automatic draw handling and common dead-position detection
 - Negamax alpha-beta search with iterative deepening
 - Four-entry clustered transposition table with generation-aware replacement and principal-variation search
-- Quiescence search, late-move reduction, null-move pruning, and futility pruning
-- TT move, MVV-LVA, killer, and history move ordering
+- Quiescence search, SEE, aspiration windows, history-aware late-move reduction, guarded null-move pruning, and selective futility pruning
+- Systematic move ordering: TT move, SEE-ranked captures, promotions, killers, counter-moves, and history-ranked quiet moves
 - UCI time management and asynchronous `stop` support
 - Built-in `perft`, FEN, move-list, and debug diagnostics
 

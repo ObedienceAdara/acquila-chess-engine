@@ -40,7 +40,7 @@ The UCI harness verifies:
 - absence of mate sentinels masquerading as centipawns
 - responsive asynchronous `stop` handling
 
-## 5. Search regression
+## 5. Strength/search regression
 
 Keep a fixed tactical/strategic position suite. Track:
 
@@ -50,11 +50,17 @@ Keep a fixed tactical/strategic position suite. Track:
 - nodes
 - NPS
 - principal variation
+- aspiration re-search frequency
+- null-move cutoffs and verification failures
+- futility-pruned moves
+- reduced versus full-depth re-searches
 
-## 6. SPRT
+Strength changes should be introduced one mechanism at a time and compared by fixed self-play/tournament runs.
+
+## 7. SPRT
 
 Use CuteChess-cli or OpenBench for engine-vs-engine testing. Every search/evaluation change should have a reproducible binary, configuration, time control and game count.
 
-## 7. External rating
+## 8. External rating
 
 Only claim an Elo/rating after a published match protocol or independent rating list result. No internal node-count benchmark should be presented as an Elo estimate.

@@ -1,6 +1,6 @@
-# Aquila v0.2 Status
+# Aquila v0.3 Status
 
-## Correctness-hardening release
+## Move-ordering and search-heuristics release
 
 | Area | Status |
 |---|---|
@@ -15,6 +15,12 @@
 | Dead-position material cases | Explicit detector + regression coverage |
 | TT mate-score normalization | Implemented + cross-ply regression test |
 | Clustered TT | Four-entry buckets with depth/age-aware replacement |
+| SEE | Static exchange evaluation for tactical capture ordering |
+| Counter-moves | Previous-move indexed quiet-move ordering heuristic |
+| Aspiration windows | Iterative-deepening root windows with widening on fail low/high |
+| LMR | Depth/move-number/history/PV/check-aware reductions |
+| Null move | Low-material guards plus deeper verification search |
+| Futility pruning | Selective shallow quiet-move pruning |
 | UCI mate reporting | Emits `score mate N` for mate scores |
 | Search termination | UCI stop regression coverage |
 | UCI core | Implemented |
@@ -36,4 +42,4 @@
 
 ## Strength claim
 
-No Elo or "Stockfish-level" claim is made. This release establishes a correctness-tested search-state baseline before further search/evaluation optimization.
+No Elo or "Stockfish-level" claim is made. This release establishes a correctness-tested search-state baseline before further search/evaluation optimization. The new search heuristics are engineering changes, not an Elo claim.
