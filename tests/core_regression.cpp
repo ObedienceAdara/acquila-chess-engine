@@ -142,7 +142,7 @@ void test_draw_rules() {
     require(knightless.is_dead_position(), "K+N vs K dead position not detected");
 
     Board checkmate;
-    checkmate.set_fen("7k/8/8/8/8/8/6q1/6K1 w - - 150 1");
+    checkmate.set_fen("6rk/8/8/8/8/8/6q1/6K1 w - - 150 1");
     Searcher mate_search(checkmate);
     require(mate_search.debug_search(2, -INF, INF, 0) == -MATE,
             "75-move threshold incorrectly masked checkmate");
