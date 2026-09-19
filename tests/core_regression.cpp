@@ -243,21 +243,27 @@ void test_tt_semantics() {
     require(searcher.node_count() > 1, "shallower TT entry incorrectly cut off deeper search");
 
     searcher.clear();
-    searcher.debug_search(depth, exact - 1, exact, 0);
+    constexpr Score lower_alpha = -INF;
+    constexpr Score lower_beta = -INF + 1;
+    const Score lower_result = searcher.debug_search(depth, lower_alpha, lower_beta, 0);
     const TTEntry* lower = searcher.debug_tt().probe(board.key);
     require(lower != nullptr && lower->flag == LOWER, "lower-bound search did not store LOWER");
     searcher.debug_reset_nodes();
-    const Score lower_cutoff = searcher.debug_search(depth, exact - 1, exact, 1);
-    require(lower_cutoff == exact, "LOWER TT cutoff returned wrong score");
+    const Score lower_cutoff = searcher.debug_search(depth, lower_alpha, lower_beta, 1);
+    require(lower_cutoff == lower_result, "LOWER TT cutoff returned wrong score");
+    require(lower_cutoff >= lower_beta, "LOWER TT cutoff violated its bound");
     require(searcher.node_count() == 1, "LOWER TT bound did not cut off search");
 
     searcher.clear();
-    searcher.debug_search(depth, exact, exact + 1, 0);
+    constexpr Score upper_alpha = INF - 1;
+    constexpr Score upper_beta = INF;
+    const Score upper_result = searcher.debug_search(depth, upper_alpha, upper_beta, 0);
     const TTEntry* upper = searcher.debug_tt().probe(board.key);
     require(upper != nullptr && upper->flag == UPPER, "upper-bound search did not store UPPER");
     searcher.debug_reset_nodes();
-    const Score upper_cutoff = searcher.debug_search(depth, exact, exact + 1, 1);
-    require(upper_cutoff == exact, "UPPER TT cutoff returned wrong score");
+    const Score upper_cutoff = searcher.debug_search(depth, upper_alpha, upper_beta, 1);
+    require(upper_cutoff == upper_result, "UPPER TT cutoff returned wrong score");
+    require(upper_cutoff <= upper_alpha, "UPPER TT cutoff violated its bound");
     require(searcher.node_count() == 1, "UPPER TT bound did not cut off search");
 
     searcher.clear();
