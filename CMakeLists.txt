@@ -12,4 +12,4 @@ if(NOT MSVC)
 endif()
 
 enable_testing()
-add_test(NAME perft COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/perft_suite.sh)
+add_test(NAME perft COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/perft_suite.sh)
