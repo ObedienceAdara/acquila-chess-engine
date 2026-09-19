@@ -23,6 +23,10 @@ Run `make test` before every strength change. The deterministic core harness cov
 - threefold/fivefold repetition
 - 50-move claim and 75-move automatic draw semantics
 - dead-position material cases
+- TT cluster collision and replacement behavior
+- generation/age replacement behavior
+- EXACT/LOWER/UPPER bound storage and cutoffs
+- TT depth-eligibility and repeated-root behavior
 - TT mate-distance normalization across different plies
 - checkmate precedence over the 75-move threshold
 
@@ -36,7 +40,7 @@ The UCI harness verifies:
 - absence of mate sentinels masquerading as centipawns
 - responsive asynchronous `stop` handling
 
-## 4. Search regression
+## 5. Search regression
 
 Keep a fixed tactical/strategic position suite. Track:
 
@@ -47,10 +51,10 @@ Keep a fixed tactical/strategic position suite. Track:
 - NPS
 - principal variation
 
-## 5. SPRT
+## 6. SPRT
 
 Use CuteChess-cli or OpenBench for engine-vs-engine testing. Every search/evaluation change should have a reproducible binary, configuration, time control and game count.
 
-## 6. External rating
+## 7. External rating
 
 Only claim an Elo/rating after a published match protocol or independent rating list result. No internal node-count benchmark should be presented as an Elo estimate.
