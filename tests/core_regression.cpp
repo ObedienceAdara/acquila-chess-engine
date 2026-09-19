@@ -388,9 +388,9 @@ void test_quiescence_and_tapered_hce() {
     // Connected pawns should receive a structural bonus relative to an
     // otherwise comparable isolated pair.
     Board connected;
-    connected.set_fen("4k3/pp6/8/8/8/8/1PP5/4K3 w - - 0 1");
+    connected.set_fen("4k3/pp6/8/8/8/8/PP6/4K3 w - - 0 1");
     Board isolated;
-    isolated.set_fen("4k3/p1p5/8/8/8/8/P1P5/4K3 w - - 0 1");
+    isolated.set_fen("4k3/pp6/8/8/8/8/P1P5/4K3 w - - 0 1");
     Searcher connected_search(connected);
     Searcher isolated_search(isolated);
     require(connected_search.debug_eval()>isolated_search.debug_eval()+10,
