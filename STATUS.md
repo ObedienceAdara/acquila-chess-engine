@@ -1,13 +1,21 @@
-# Aquila v0.1 Status
+# Aquila v0.2 Status
 
-## Verified in this build
+## Correctness-hardening release
 
 | Area | Status |
 |---|---|
 | Bitboards | Implemented |
 | Magic sliding attacks | Implemented + exhaustive startup self-test |
 | Legal move generation | Implemented |
-| Perft suite | Verified against included reference counts |
+| Perft suite | Verified against reference counts |
+| Make/unmake invariants | Deterministic randomized regression coverage |
+| Zobrist consistency | Regression coverage against canonical recomputation |
+| Threefold/fivefold repetition | Explicit claimable vs automatic semantics |
+| 50-move / 75-move rules | Explicit claimable vs automatic semantics |
+| Dead-position material cases | Explicit detector + regression coverage |
+| TT mate-score normalization | Implemented + cross-ply regression test |
+| UCI mate reporting | Emits `score mate N` for mate scores |
+| Search termination | UCI stop regression coverage |
 | UCI core | Implemented |
 | Asynchronous stop | Implemented |
 | Zobrist | Implemented |
@@ -27,4 +35,4 @@
 
 ## Strength claim
 
-No Elo or "Stockfish-level" claim is made. The codebase is a measured foundation for that research program.
+No Elo or "Stockfish-level" claim is made. This release establishes a correctness-tested baseline before further search/evaluation optimization.

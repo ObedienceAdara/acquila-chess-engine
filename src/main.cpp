@@ -21,6 +21,27 @@ using Score = int;
 constexpr Score INF = 32000;
 constexpr Score MATE = 30000;
 constexpr int MAX_PLY = 128;
+constexpr Score MATE_THRESHOLD = MATE - MAX_PLY;
+
+inline bool is_mate_score(Score s){ return s > MATE_THRESHOLD || s < -MATE_THRESHOLD; }
+inline Score score_to_tt(Score s,int ply){
+    if(s>MATE_THRESHOLD)return s+ply;
+    if(s<-MATE_THRESHOLD)return s-ply;
+    return s;
+}
+inline Score score_from_tt(Score s,int ply){
+    if(s>MATE_THRESHOLD)return s-ply;
+    if(s<-MATE_THRESHOLD)return s+ply;
+    return s;
+}
+inline int mate_moves_from_score(Score s){
+    if(s>MATE_THRESHOLD)return (MATE-s+1)/2;
+    return -((MATE+s+1)/2);
+}
+inline std::string uci_score(Score s){
+    return is_mate_score(s) ? "score mate "+std::to_string(mate_moves_from_score(s))
+                            : "score cp "+std::to_string(s);
+}
 constexpr U64 BB_ALL = ~U64(0);
 
 enum Color : int { WHITE=0, BLACK=1 };
@@ -227,16 +248,48 @@ public:
         put(from,p);
         if(u.move.flag()==Move::ENPASSANT){int cs=to+(side==WHITE?-8:8);put(cs,u.captured);} else if(u.captured)put(to,u.captured); else if(p==EMPTY){} key=u.key; if(!history.empty())history.pop_back();
     }
-    bool insufficient_material() const {
+    bool is_dead_position() const {
         if(bb[WP-1]||bb[BP-1]||bb[WR-1]||bb[BR-1]||bb[WQ-1]||bb[BQ-1])return false;
         int wn=popcount(bb[WN-1]),bn=popcount(bb[BN-1]),wb=popcount(bb[WB-1]),bbk=popcount(bb[BB-1]);
-        int total=wn+bn+wb+bbk; if(total<=1)return true; if(total==2){ if(wn==1&&bn==1)return false; if(wb==1&&bbk==1){int a=__builtin_ctzll(bb[WB-1]),bq=__builtin_ctzll(bb[BB-1]); return ((file_of(a)+rank_of(a))&1)==((file_of(bq)+rank_of(bq))&1); } } return false;
+        int total=wn+bn+wb+bbk;
+        if(total<=1)return true;
+        if(total==2){
+            if(wn==1&&bn==1)return false;
+            if(wb==1&&bbk==1){
+                int a=__builtin_ctzll(bb[WB-1]),bq=__builtin_ctzll(bb[BB-1]);
+                return ((file_of(a)+rank_of(a))&1)==((file_of(bq)+rank_of(bq))&1);
+            }
+        }
+        return false;
     }
-    bool threefold() const { if(history.empty())return false; U64 k=key; int count=0; int limit=std::min<int>(halfmove,(int)history.size()-1); for(int i=(int)history.size()-1,steps=0;i>=0&&steps<=limit;i--,steps++) if(history[i]==k){if(++count>=3)return true;} return false; }
-    bool fivefold() const { if(history.empty())return false; U64 k=key; int count=0; int limit=std::min<int>(halfmove,(int)history.size()-1); for(int i=(int)history.size()-1,steps=0;i>=0&&steps<=limit;i--,steps++) if(history[i]==k){if(++count>=5)return true;} return false; }
-    bool fifty_move_claimable() const { return halfmove>=100; }
-    bool seventyfive_move_draw() const { return halfmove>=150; }
-    bool draw_by_rule() const { return fifty_move_claimable() || threefold() || fivefold() || insufficient_material(); }
+    bool is_threefold_repetition() const {
+        if(history.empty())return false;
+        U64 k=key; int count=0;
+        int limit=std::min<int>(halfmove,(int)history.size()-1);
+        for(int i=(int)history.size()-1,steps=0;i>=0&&steps<=limit;i--,steps++)
+            if(history[i]==k && ++count>=3)return true;
+        return false;
+    }
+    bool is_fivefold_repetition() const {
+        if(history.empty())return false;
+        U64 k=key; int count=0;
+        int limit=std::min<int>(halfmove,(int)history.size()-1);
+        for(int i=(int)history.size()-1,steps=0;i>=0&&steps<=limit;i--,steps++)
+            if(history[i]==k && ++count>=5)return true;
+        return false;
+    }
+    bool is_fifty_move_claimable() const { return halfmove>=100; }
+    bool is_seventyfive_move_draw() const { return halfmove>=150; }
+    bool is_claimable_draw() const {
+        return is_threefold_repetition() || is_fifty_move_claimable();
+    }
+    bool is_automatic_draw() const {
+        return is_fivefold_repetition() || is_seventyfive_move_draw() || is_dead_position();
+    }
+    // Search treats a claimable draw as an immediately available draw option.
+    bool is_draw_for_search() const {
+        return is_claimable_draw() || is_automatic_draw();
+    }
 
     template<class Vec>
     void pseudo(Vec&out, bool captures_only=false) const {
@@ -254,6 +307,30 @@ public:
             if(us==BLACK && (castle&BQCA) && b[sq(1,7)]==EMPTY&&b[sq(2,7)]==EMPTY&&b[sq(3,7)]==EMPTY&&!attacked(sq(3,7),them)&&!attacked(sq(2,7),them))add(ks,sq(2,7),NONE,Move::CASTLE);
         }}
     }
+    bool is_consistent() const {
+        if((occ[WHITE]&occ[BLACK])!=0)return false;
+        if(all!=(occ[WHITE]|occ[BLACK]))return false;
+        if((castle&~15)!=0)return false;
+        if(ep<-1||ep>=64)return false;
+        if(halfmove<0||fullmove<1)return false;
+
+        U64 calc_bb[12]{}, calc_occ[2]{};
+        for(int s=0;s<64;s++){
+            Piece p=b[s];
+            if(!p)continue;
+            int pi=p-1, ci=color_of(p);
+            U64 bs=bit(s);
+            calc_bb[pi]|=bs;
+            calc_occ[ci]|=bs;
+        }
+        for(int i=0;i<12;i++)if(calc_bb[i]!=bb[i])return false;
+        if(calc_occ[WHITE]!=occ[WHITE]||calc_occ[BLACK]!=occ[BLACK])return false;
+        if(popcount(bb[WK-1])!=1||popcount(bb[BK-1])!=1)return false;
+        if(key!=compute_key())return false;
+        if(!history.empty()&&history.back()!=key)return false;
+        return true;
+    }
+
     std::vector<Move> legal(bool captures_only=false){ std::vector<Move> p; p.reserve(128); pseudo(p,captures_only); std::vector<Move> out;out.reserve(p.size()); for(const auto&m:p){Undo u;if(make(m,u)){Color moved=opp(side);bool ok=!in_check(moved);undo(u);if(ok)out.push_back(m);}} return out; }
     std::vector<Move> legal_no_mutation(bool captures_only=false) const { Board tmp=*this; return tmp.legal(captures_only); }
 };
@@ -296,27 +373,46 @@ class Searcher {
     int score_move(const Move&m,const Move&ttm,int ply) const {int s=0;if(m==ttm)s+=1000000;Piece cap=pos.b[m.to()];if(m.flag()==Move::ENPASSANT)cap=(pos.side==WHITE?BP:BP);if(cap!=EMPTY)s+=10000+10*piece_value[type_of(cap)]-piece_value[type_of(pos.b[m.from()])];if(m.flag()==Move::PROMOTION)s+=8000+piece_value[m.promo()];if(m==killers[ply][0])s+=9000;if(m==killers[ply][1])s+=8000;s+=history[pos.side][m.from()][m.to()]/32;return s;}
     std::vector<Move> ordered(const std::vector<Move>&ms,const Move&ttm,int ply) const {std::vector<std::pair<int,Move>> v;v.reserve(ms.size());for(auto&m:ms)v.push_back({score_move(m,ttm,ply),m});std::stable_sort(v.begin(),v.end(),[](auto&a,auto&b){return a.first>b.first;});std::vector<Move> o;o.reserve(ms.size());for(auto&x:v)o.push_back(x.second);return o;}
     Score quiesce(Score alpha,Score beta,int ply){
-        touch();if(stop.load())return 0; if(pos.draw_by_rule())return 0; Score stand=eval();if(stand>=beta)return beta;if(stand>alpha)alpha=stand;bool chk=pos.in_check(pos.side);auto ms=pos.legal(chk?false:true); // in check, all moves; otherwise captures only
+        touch();if(stop.load())return 0;
+        bool chk=pos.in_check(pos.side);
+        auto ms=pos.legal(chk?false:true); // in check, all moves; otherwise captures only
+        if(chk && ms.empty())return -MATE+ply;
+        if(!chk && ms.empty() && pos.legal(false).empty())return 0;
+        if(pos.is_draw_for_search())return 0;
+        Score stand=eval();if(stand>=beta)return beta;if(stand>alpha)alpha=stand;
         std::vector<Move> caps; caps.reserve(ms.size());for(auto&m:ms){Piece cap=pos.b[m.to()];if(chk||cap!=EMPTY||m.flag()==Move::ENPASSANT||m.flag()==Move::PROMOTION)caps.push_back(m);} 
         for(auto&m:ordered(caps,Move{},ply)){Undo u;if(!pos.make(m,u))continue;Score sc=-quiesce(-beta,-alpha,ply+1);pos.undo(u);if(stop.load())return 0;if(sc>=beta)return beta;if(sc>alpha)alpha=sc;}return alpha;
     }
     Score search(int depth,Score alpha,Score beta,int ply,bool allow_null=true){
-        touch();if(stop.load())return 0;if(ply>=MAX_PLY-1)return eval(); if(pos.draw_by_rule())return 0;
+        touch();if(stop.load())return 0;if(ply>=MAX_PLY-1)return eval();
         bool root=(ply==0); bool chk=pos.in_check(pos.side); if(depth<=0)return quiesce(alpha,beta,ply);
-        TTEntry *te=tt.probe(pos.key); Move ttm; if(te->key==pos.key){ttm.data=te->move;if(!root&&te->depth>=depth){if(te->flag==EXACT)return te->score;if(te->flag==LOWER&&te->score>=beta)return te->score;if(te->flag==UPPER&&te->score<=alpha)return te->score;}}
+        auto moves=pos.legal();
+        if(moves.empty())return chk?(-MATE+ply):0;
+        if(pos.is_draw_for_search())return 0;
+        TTEntry *te=tt.probe(pos.key); Move ttm;
+        if(te->key==pos.key){
+            ttm.data=te->move;
+            if(!root&&te->depth>=depth){
+                Score tt_score=score_from_tt(te->score,ply);
+                if(te->flag==EXACT)return tt_score;
+                if(te->flag==LOWER&&tt_score>=beta)return tt_score;
+                if(te->flag==UPPER&&tt_score<=alpha)return tt_score;
+            }
+        }
         Score static_eval=eval();
         if(!chk&&allow_null&&depth>=3&&static_eval>=beta&&pos.halfmove<120){ // guarded null move
             Color us=pos.side; int savedEp=pos.ep, savedHalf=pos.halfmove; U64 savedKey=pos.key; pos.side=opp(us); pos.ep=-1; ++pos.halfmove; pos.key=pos.compute_key(); Score sc=-search(depth-1-(depth>6?2:1),-beta,-beta+1,ply+1,false); pos.side=us; pos.ep=savedEp; pos.halfmove=savedHalf; pos.key=savedKey; if(stop.load())return 0; if(sc>=beta)return sc;
         }
         if(!chk && depth<=3 && static_eval+120*depth<=alpha){auto q=pos.legal(true); if(q.empty()) return static_eval;}
-        auto moves=pos.legal();if(moves.empty())return chk?(-MATE+ply):0;
         auto om=ordered(moves,ttm,ply); Score orig_alpha=alpha,best=-INF;Move bestm;int move_no=0;
         for(auto&m:om){Piece cap=pos.b[m.to()];Undo u;if(!pos.make(m,u))continue;bool quiet=is_quiet(m,cap);Score sc;
             if(move_no==0){sc=-search(depth-1,-beta,-alpha,ply+1,true);}else{int r=0;if(depth>=3&&quiet&&move_no>=4){r=1+(move_no>=8&&depth>=6); } sc=-search(depth-1-r,-alpha-1,-alpha,ply+1,true); if(!stop.load()&&sc>alpha&&sc<beta)sc=-search(depth-1,-beta,-alpha,ply+1,true);} pos.undo(u); if(stop.load())return 0;
             if(sc>best){best=sc;bestm=m;} if(sc>alpha){alpha=sc;if(quiet){history[pos.side][m.from()][m.to()]=std::clamp(history[pos.side][m.from()][m.to()]+depth*depth, -100000,100000);} } else if(quiet){history[pos.side][m.from()][m.to()]=std::clamp(history[pos.side][m.from()][m.to()]-depth, -100000,100000);}
             if(alpha>=beta){if(quiet){killers[ply][1]=killers[ply][0];killers[ply][0]=m;}break;} ++move_no;
         }
-        Bound fl=(best<=orig_alpha?UPPER:(best>=beta?LOWER:EXACT));tt.store(pos.key,depth,best,fl,bestm,static_eval);return best;
+        Bound fl=(best<=orig_alpha?UPPER:(best>=beta?LOWER:EXACT));
+        tt.store(pos.key,depth,score_to_tt(best,ply),fl,bestm,static_eval);
+        return best;
     }
 public:
     Searcher(Board&p,std::size_t hash_mb=64):pos(p),tt(hash_mb){}
@@ -329,6 +425,9 @@ public:
     void set_hash_mb(std::size_t mb){hash_mb=std::clamp<std::size_t>(mb,1,2048);tt.resize(hash_mb);}
     std::uint64_t node_count()const{return nodes;}
     int hashfull()const{return const_cast<TT&>(tt).hashfull();}
+    Score debug_search(int depth,Score alpha=-INF,Score beta=INF,int ply=0){
+        return search(depth,alpha,beta,ply,true);
+    }
     std::pair<Move,Score> think(){
         auto all_legal=pos.legal(); if(all_legal.empty())return {Move{},pos.in_check(pos.side)?-MATE:0};
         std::vector<Move> legal; if(restricted_root.empty()) legal=all_legal; else for(auto&m:all_legal)for(auto&r:restricted_root)if(m==r){legal.push_back(m);break;}
@@ -348,7 +447,7 @@ public:
             if(!roots.empty()){best=roots[0].first;bestscore=roots[0].second;}
             auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start_time).count();
             std::uint64_t nps=nodes*1000ULL/std::max<long long>(1,ms);
-            std::cout<<"info depth "<<d<<" score cp "<<bestscore<<" nodes "<<nodes<<" nps "<<nps<<" hashfull "<<hashfull()<<" pv "<<move_uci(best)<<"\n"<<std::flush;
+            std::cout<<"info depth "<<d<<" "<<uci_score(bestscore)<<" nodes "<<nodes<<" nps "<<nps<<" hashfull "<<hashfull()<<" pv "<<move_uci(best)<<"\n"<<std::flush;
         }
         return {best,bestscore};
     }

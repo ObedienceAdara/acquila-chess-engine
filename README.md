@@ -10,8 +10,8 @@ Aquila is a standalone C++17 chess engine built from scratch as an engineering f
 - Fixed-shift magic bitboards for rook and bishop attacks
 - Exhaustive startup validation of the magic attack tables
 - Legal move generation with castling, en passant, promotion, and underpromotion
-- Zobrist hashing and repetition tracking
-- Fifty-move and 75-move draw handling plus common dead-position detection
+- Zobrist hashing and repetition tracking with invariant checks
+- Separate claimable/automatic draw handling and common dead-position detection
 - Negamax alpha-beta search with iterative deepening
 - Transposition table and principal-variation search
 - Quiescence search, late-move reduction, null-move pruning, and futility pruning
@@ -85,11 +85,13 @@ The current move generator matches the included reference counts for the tested 
 | En-passant / castling | 4 | 1,280,017 |
 | Promotion-heavy | 5 | 5,617,302 |
 
-Run the suite with:
+Run the full correctness suite with:
 
 ```bash
 make test
 ```
+
+The regression suite covers perft, deterministic make/unmake state restoration, Zobrist-key consistency, repetition and move-count draw semantics, TT mate-distance normalization, UCI mate-score formatting, and asynchronous search termination.
 
 ## Development direction
 

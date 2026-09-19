@@ -5,7 +5,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: make -j
-      - name: Perft suite
-        run: bash ./tests/perft_suite.sh
+      - name: Full correctness regression suite
+        run: make test
