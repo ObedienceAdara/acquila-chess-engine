@@ -281,7 +281,7 @@ class Searcher {
       {-20,-10,-10,-10,-10,-10,-10,-20,-10,0,0,0,0,0,0,-10,-10,0,5,8,8,5,0,-10,-10,5,5,10,10,5,5,-10,-10,0,10,10,10,10,0,-10,-10,5,0,0,0,0,5,-10,-20,-10,-10,-10,-10,-10,-10,-20},
       {0,0,0,5,5,0,0,0, 0,0,0,5,5,0,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, 0,0,0,5,5,0,0,0, 0,0,0,5,5,0,0,0},
       {-20,-10,-10,-5,-5,-10,-10,-20, -10,0,0,0,0,0,0,-10, 0,0,5,5,5,5,0,0, 0,0,5,10,10,5,0,0, 0,0,5,10,10,5,0,0, -10,0,0,0,0,0,0,-10, -20,-10,-10,-5,-5,-10,-10,-20},
-      {-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-30,-30,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10, 0,-10,-10,-10,-10,-10,-10,0, 20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20}
+      {-30,-40,-40,-50,-50,-40,-40,-30, -30,-40,-40,-50,-50,-40,-40,-30, -20,-30,-30,-40,-40,-30,-30,-20, -10,-20,-20,-20,-20,-20,-20,-10, 0,-10,-10,-10,-10,-10,-10,0, 20,20,0,0,0,0,20,20, 20,30,10,0,0,10,30,20}
     };
     Score eval() const {
         Score s=0; for(int sqr=0;sqr<64;sqr++){Piece p=pos.b[sqr];if(!p)continue;int pt=type_of(p);int idx=pt-1;int ps=pos.side==WHITE? pst[idx][sqr] : -pst[idx][sqr^56];Score v=piece_value[pt]+ps; s += (color_of(p)==pos.side?v:-v);} 
@@ -297,7 +297,7 @@ class Searcher {
     std::vector<Move> ordered(const std::vector<Move>&ms,const Move&ttm,int ply) const {std::vector<std::pair<int,Move>> v;v.reserve(ms.size());for(auto&m:ms)v.push_back({score_move(m,ttm,ply),m});std::stable_sort(v.begin(),v.end(),[](auto&a,auto&b){return a.first>b.first;});std::vector<Move> o;o.reserve(ms.size());for(auto&x:v)o.push_back(x.second);return o;}
     Score quiesce(Score alpha,Score beta,int ply){
         touch();if(stop.load())return 0; if(pos.draw_by_rule())return 0; Score stand=eval();if(stand>=beta)return beta;if(stand>alpha)alpha=stand;bool chk=pos.in_check(pos.side);auto ms=pos.legal(chk?false:true); // in check, all moves; otherwise captures only
-        std::vector<Move> caps; caps.reserve(ms.size());for(auto&m:ms){Piece cap=pos.b[m.to()];if(chk||cap!=EMPTY||m.flag()==Move::ENPASSANT||m.flag()==Move::PROMOTION)caps.push_back(m);}
+        std::vector<Move> caps; caps.reserve(ms.size());for(auto&m:ms){Piece cap=pos.b[m.to()];if(chk||cap!=EMPTY||m.flag()==Move::ENPASSANT||m.flag()==Move::PROMOTION)caps.push_back(m);} 
         for(auto&m:ordered(caps,Move{},ply)){Undo u;if(!pos.make(m,u))continue;Score sc=-quiesce(-beta,-alpha,ply+1);pos.undo(u);if(stop.load())return 0;if(sc>=beta)return beta;if(sc>alpha)alpha=sc;}return alpha;
     }
     Score search(int depth,Score alpha,Score beta,int ply,bool allow_null=true){
@@ -387,7 +387,7 @@ void uci_loop(){
             stop_search(); pos.set_fen("startpos"); engine.clear();
         } else if(cmd=="setoption"){
             stop_search(); std::string name,value,token; is>>token; if(token=="name") { while(is>>token){ if(token=="value"){is>>value;break;} if(!name.empty())name+=' ';name+=token; } }
-            if(name=="Hash"&&!value.empty()){int mb=std::clamp(std::stoi(value),1,2048);engine.set_hash_mb(mb);}
+            if(name=="Hash"&&!value.empty()){int mb=std::clamp(std::stoi(value),1,2048);engine.set_hash_mb(mb);} 
         } else if(cmd=="position"){
             stop_search(); std::string kind;is>>kind;
             if(kind=="startpos")pos.set_fen("startpos");
