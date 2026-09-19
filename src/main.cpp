@@ -539,19 +539,6 @@ class Searcher {
         return df+dr;
     }
 
-    U64 forward_pawn_mask(Color c,int s) const {
-        U64 mask=0;
-        const int f=file_of(s),r=rank_of(s);
-        if(c==WHITE){
-            for(int rr=r+1;rr<8;rr++)
-                mask|=FileMask[f]&RankMask[rr];
-        }else{
-            for(int rr=r-1;rr>=0;rr--)
-                mask|=FileMask[f]&RankMask[rr];
-        }
-        return mask;
-    }
-
     U64 forward_with_adjacent_mask(Color c,int s) const {
         U64 mask=0;
         const int f=file_of(s),r=rank_of(s);
@@ -583,9 +570,8 @@ class Searcher {
     }
 
     U64 control_map(Color c) const {
-        U64 control=PawnAtt[opp(c)][0] & 0ULL;
+        U64 control=0;
         U64 pawns=pos.bb[(c==WHITE?WP:BP)-1];
-        U64 own=pos.occ[c];
         while(pawns){
             const int s=poplsb(pawns);
             control|=PawnAtt[c][s];
@@ -612,7 +598,6 @@ class Searcher {
         }
         U64 king=pos.bb[(c==WHITE?WK:BK)-1];
         if(king)control|=KingAtt[__builtin_ctzll(king)];
-        (void)own;
         return control;
     }
 
@@ -620,7 +605,7 @@ class Searcher {
         return popcount(pawns&FileMask[f]);
     }
 
-    Score evaluate_side_terms(Color c,int&mg,int&eg) const {
+    void evaluate_side_terms(Color c,int&mg,int&eg) const {
         const Color enemy=opp(c);
         const U64 own_pawns=pos.bb[(c==WHITE?WP:BP)-1];
         const U64 enemy_pawns=pos.bb[(enemy==WHITE?WP:BP)-1];
@@ -845,8 +830,6 @@ class Searcher {
             :(RankMask[2]|RankMask[3]|RankMask[4]);
         add(popcount(own_control&center)*3,popcount(own_control&center)*2);
         add(popcount(own_control&space_zone),0);
-
-        return 0;
     }
 
     Score eval() const {
@@ -1067,7 +1050,7 @@ class Searcher {
 
         const bool chk=pos.in_check(pos.side);
         if(pos.is_draw_for_search())return 0;
-        if(ply>=MAX_PLY-1)return chk?eval():eval();
+        if(ply>=MAX_PLY-1)return chk?(-INF+ply):eval();
 
         auto legal_moves=pos.legal(false);
         if(legal_moves.empty())return chk?(-MATE+ply):0;
