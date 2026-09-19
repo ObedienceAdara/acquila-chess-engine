@@ -287,6 +287,44 @@ void test_tt_semantics() {
     require(score_from_tt(me->score, 9) == mate_score - 4, "mate score failed cross-ply normalization");
 }
 
+void test_see_and_move_ordering() {
+    Board winning;
+    winning.set_fen("3r3k/8/8/8/8/8/8/3QK3 w - - 0 1");
+    Searcher winning_search(winning);
+    const Move winning_capture=find_uci(winning,"d1d8");
+    require(winning_capture.data!=0, "winning SEE fixture move is illegal");
+    require(winning_search.debug_see(winning_capture)>0, "SEE failed to recognize winning capture");
+
+    Board losing;
+    losing.set_fen("3r1q1k/8/8/8/8/8/8/3QK3 w - - 0 1");
+    Searcher losing_search(losing);
+    const Move losing_capture=find_uci(losing,"d1d8");
+    require(losing_capture.data!=0, "losing SEE fixture move is illegal");
+    require(losing_search.debug_see(losing_capture)<0, "SEE failed to recognize losing exchange");
+
+    Board promotion;
+    promotion.set_fen("7k/P7/8/8/8/8/8/K7 w - - 0 1");
+    Searcher promotion_search(promotion);
+    const Move promote=find_uci(promotion,"a7a8q");
+    require(promote.data!=0, "promotion ordering fixture move is illegal");
+
+    const int winning_score=winning_search.debug_move_score(winning_capture);
+    const int losing_score=losing_search.debug_move_score(losing_capture);
+    require(winning_score>losing_score, "winning SEE capture was not ordered above losing capture");
+
+    const auto moves=promotion.legal();
+    const int promotion_score=promotion_search.debug_move_score(promote);
+    const Move killer=moves.front();
+    const int killer_score=promotion_search.debug_move_score(killer,Move{},Move{},0);
+    require(promotion_score>killer_score, "promotion was not ordered above quiet moves");
+
+    const int tt_score=promotion_search.debug_move_score(killer,killer,Move{},0);
+    require(tt_score>promotion_score, "TT move was not given highest priority");
+
+    const int counter_score=promotion_search.debug_move_score(killer,Move{},killer,0);
+    require(counter_score>killer_score, "counter-move priority was not applied");
+}
+
 void test_mate_tt_normalization() {
     Board mate;
     mate.set_fen("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1");
@@ -317,6 +355,7 @@ int main() {
         test_draw_rules();
         test_tt_cluster_and_replacement();
         test_tt_semantics();
+        test_see_and_move_ordering();
         test_mate_tt_normalization();
         test_uci_score_formatting();
         std::cout << "core regression tests: PASS\n";
