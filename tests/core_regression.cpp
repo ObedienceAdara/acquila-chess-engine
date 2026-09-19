@@ -173,7 +173,7 @@ void test_incremental_hash_special_moves() {
     check(promotion, {"a7a8q"}, "promotion");
 
     Board capture;
-    capture.set_fen("7k/8/8/3p4/8/8/2P5/K6R w - - 0 1");
+    capture.set_fen("7k/8/8/8/8/3p4/2P5/K6R w - - 0 1");
     check(capture, {"c2d3"}, "capture");
 }
 
