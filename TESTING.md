@@ -29,6 +29,9 @@ Run `make test` before every strength change. The deterministic core harness cov
 - TT depth-eligibility and repeated-root behavior
 - TT mate-distance normalization across different plies
 - checkmate precedence over the 75-move threshold
+- quiescence multi-capture tactical-horizon regression
+- quiescence quiet-check exploration regression
+- tapered HCE directional regressions for passers, king activity, rook files and pawn connectivity
 
 ## 3. UCI regression
 
@@ -42,7 +45,7 @@ The UCI harness verifies:
 
 ## 5. Strength/search regression
 
-Keep a fixed tactical/strategic position suite. Track:
+Keep a fixed tactical/strategic position suite. Include positions with multi-capture exchanges, promotion tactics, checking sequences, exposed kings, pawn-structure transitions, rook-file choices, and king-and-pawn endgames. Track:
 
 - best move
 - score
