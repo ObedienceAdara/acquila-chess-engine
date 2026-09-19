@@ -325,6 +325,78 @@ void test_see_and_move_ordering() {
     require(counter_score>quiet_score, "counter-move priority was not applied");
 }
 
+
+void test_quiescence_and_tapered_hce() {
+    // Tactical horizon regression:
+    // White can play Qxd8, black Qxd8, then white Rxd8. A shallow
+    // material-only horizon can stop after the second ply and mis-evaluate
+    // the position; quiescence must carry the forced capture sequence through.
+    Board tactical;
+    tactical.set_fen("k4q1r/8/8/7Q/8/8/8/4K2R w - - 0 1");
+    Searcher tactical_search(tactical);
+    const Move qxh8=find_uci(tactical,"h5h8");
+    require(qxh8.data!=0, "quiescence tactical fixture move is illegal");
+    require(tactical_search.debug_see(qxh8)>0, "tactical chain capture was incorrectly SEE-filtered");
+    const Score stand=tactical_search.debug_eval();
+    tactical_search.debug_reset_nodes();
+    const Score qscore=tactical_search.debug_quiesce(-INF,INF,0,8);
+    require(tactical_search.node_count()>2, "quiescence did not search the tactical exchange sequence");
+    require(qscore>stand+250, "quiescence failed to resolve a multi-capture horizon");
+
+    // Quiet-check extension regression: with no captures available, qsearch should
+    // still inspect controlled checking moves rather than stopping immediately at stand-pat.
+    Board checks;
+    checks.set_fen("6k1/8/5K2/7Q/8/8/8/8 w - - 0 1");
+    Searcher check_search(checks);
+    const Move qe8=find_uci(checks,"h5e8");
+    require(qe8.data!=0, "quiet-check fixture move is illegal");
+    check_search.debug_reset_nodes();
+    check_search.debug_quiesce(-INF,INF,0,2);
+    require(check_search.node_count()>1, "quiescence did not explore a quiet checking move");
+
+    // Tapered/endgame regressions: advanced passers and active kings must improve
+    // the endgame evaluation without relying on a fixed opening-only score.
+    Board passed_advanced;
+    passed_advanced.set_fen("7k/8/P7/8/4K3/8/8/8 w - - 0 1");
+    Board passed_back;
+    passed_back.set_fen("7k/8/8/P7/4K3/8/8/8 w - - 0 1");
+    Searcher advanced_search(passed_advanced);
+    Searcher back_search(passed_back);
+    require(advanced_search.debug_eval()>back_search.debug_eval()+10,
+            "advanced passed pawn did not improve tapered endgame evaluation");
+
+    Board active_king;
+    active_king.set_fen("7k/8/8/P7/4K3/8/8/8 w - - 0 1");
+    Board passive_king;
+    passive_king.set_fen("7k/8/8/P7/8/8/8/K7 w - - 0 1");
+    Searcher active_search(active_king);
+    Searcher passive_search(passive_king);
+    require(active_search.debug_eval()>passive_search.debug_eval()+10,
+            "king activity did not improve endgame evaluation");
+
+    // Equal material, same pawns, different rook file: an open file should
+    // be recognized as more useful than a blocked file.
+    Board open_file;
+    open_file.set_fen("7k/p7/8/8/8/8/P7/3RK2 w - - 0 1");
+    Board blocked_file;
+    blocked_file.set_fen("7k/p7/8/8/8/8/3P4/3RK2 w - - 0 1");
+    Searcher open_search(open_file);
+    Searcher blocked_search(blocked_file);
+    require(open_search.debug_eval()>blocked_search.debug_eval()+5,
+            "rook open-file activity was not reflected in HCE");
+
+    // Connected pawns should receive a structural bonus relative to an
+    // otherwise comparable isolated pair.
+    Board connected;
+    connected.set_fen("4k3/pp6/8/8/8/8/PP6/4K3 w - - 0 1");
+    Board isolated;
+    isolated.set_fen("4k3/pp6/8/8/8/8/P1P5/4K3 w - - 0 1");
+    Searcher connected_search(connected);
+    Searcher isolated_search(isolated);
+    require(connected_search.debug_eval()>isolated_search.debug_eval()+10,
+            "pawn connectivity/isolated-pawn terms were not reflected in HCE");
+}
+
 void test_mate_tt_normalization() {
     Board mate;
     mate.set_fen("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1");
@@ -356,6 +428,7 @@ int main() {
         test_tt_cluster_and_replacement();
         test_tt_semantics();
         test_see_and_move_ordering();
+        test_quiescence_and_tapered_hce();
         test_mate_tt_normalization();
         test_uci_score_formatting();
         std::cout << "core regression tests: PASS\n";

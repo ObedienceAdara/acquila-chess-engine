@@ -2,7 +2,7 @@
 
 Aquila is a standalone C++17 chess engine built from scratch as an engineering foundation for progressively stronger search, evaluation, and performance work. It speaks the Universal Chess Interface (UCI), includes a verified legal move generator, and is structured for continuous benchmarking and improvement.
 
-> **Status:** v0.3 move ordering + search-heuristics foundation. Aquila is not currently claimed to be Stockfish-strength.
+> **Status:** v0.4 quiescence + tapered HCE foundation. Aquila is not currently claimed to be Stockfish-strength.
 
 ## Highlights
 
@@ -14,7 +14,9 @@ Aquila is a standalone C++17 chess engine built from scratch as an engineering f
 - Separate claimable/automatic draw handling and common dead-position detection
 - Negamax alpha-beta search with iterative deepening
 - Four-entry clustered transposition table with generation-aware replacement and principal-variation search
-- Quiescence search, SEE, aspiration windows, history-aware late-move reduction, guarded null-move pruning, and selective futility pruning
+- Selective quiescence: SEE-filtered captures, promotions, controlled checking moves, delta pruning, stand-pat handling, and bounded check evasions
+- Tapered HCE: tuned material, pawn structure, piece activity, king safety, space/development, rook-file activity, and endgame-specific terms
+- Aspiration windows, history-aware late-move reduction, guarded null-move pruning, and selective futility pruning
 - Systematic move ordering: TT move, SEE-ranked captures, promotions, killers, counter-moves, and history-ranked quiet moves
 - UCI time management and asynchronous `stop` support
 - Built-in `perft`, FEN, move-list, and debug diagnostics
@@ -91,11 +93,11 @@ Run the full correctness suite with:
 make test
 ```
 
-The regression suite covers perft, deterministic make/unmake state restoration, incremental Zobrist-key consistency, repetition and move-count draw semantics, TT cluster/replacement behavior, TT bound/depth semantics, mate-distance normalization, UCI mate-score formatting, and asynchronous search termination.
+The regression suite covers perft, deterministic make/unmake state restoration, incremental Zobrist-key consistency, repetition and move-count draw semantics, TT cluster/replacement behavior, TT bound/depth semantics, mate-distance normalization, quiescence tactical-horizon behavior, tapered-HCE directional behavior, UCI mate-score formatting, and asynchronous search termination.
 
 ## Development direction
 
-The project is intentionally staged. The next strength-oriented phases are: stronger search heuristics and SEE, a tuned tapered evaluator, SMP, production NNUE inference and training, PolyGlot opening-book support, Syzygy tablebases, and automated SPRT/tournament testing. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+The project is intentionally staged. The current baseline now has stronger tactical horizon handling and a layered tapered HCE. Next phases are controlled measurement/SPRT testing, further search improvements, SMP, production NNUE inference and training, PolyGlot opening-book support, and Syzygy tablebases. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## NNUE / training
 

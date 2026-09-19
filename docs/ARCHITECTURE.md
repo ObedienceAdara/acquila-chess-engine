@@ -11,8 +11,17 @@ flowchart TD
     SEARCH --> HEUR[Move Ordering]
     SEARCH --> EVAL[HCE Evaluation]
     SEARCH --> TIME[Time Manager]
-    EVAL --> PST[Material + Piece-Square Tables]
-    EVAL --> MOB[Mobility / King pressure]
+    EVAL --> PST[Material + PST]
+    EVAL --> PAWN[Pawn Structure]
+    EVAL --> ACT[Piece Activity + Coordination]
+    EVAL --> KS[King Safety]
+    EVAL --> SPACE[Space + Development]
+    EVAL --> END[Endgame Terms]
+    Q --> QCAP[SEE-filtered captures]
+    Q --> QPROM[Promotions]
+    Q --> QCHK[Controlled checks]
+    Q --> QDELTA[Delta pruning]
+    Q --> QSTAND[Stand-pat]
 ```
 
 ## Position state
@@ -25,11 +34,38 @@ Zobrist hashing incorporates piece-square occupancy, side to move, castling righ
 
 The search is a negamax alpha-beta tree with iterative deepening. Non-first moves use a PVS-style null window. Move ordering uses TT moves, SEE-ranked captures, promotions, killers, counter-moves, and history-ranked quiet moves. The search adds aspiration windows, history/PV/check-aware LMR, guarded and verified null-move pruning, and selective shallow futility pruning. Check and recapture moves receive a one-ply extension. The TT uses four entries per bucket with generation metadata and depth/age-aware replacement so collisions do not automatically destroy unrelated entries.
 
+Quiescence is selective rather than capture-only. Outside check, stand-pat establishes the static floor; captures are filtered by SEE, promotions are retained, and quiet checks are admitted only at bounded q-depth. Delta pruning rejects captures/promotions whose optimistic material swing plus margin cannot reach alpha. In-check nodes skip stand-pat and search all legal evasions so check legality is never hidden by a selective filter.
+
 The current implementation is intentionally single-threaded. SMP is a separate engineering phase because synchronization, split scheduling and shared-history quality can easily make a nominally parallel search slower.
 
 ## Evaluation
 
-The current evaluator is an HCE baseline. NNUE is not stubbed as if it were trained. The intended production path is a separate feature/accumulator layer so that network representation and inference can evolve without rewriting move generation or search.
+The evaluator is a tapered HCE. Material and piece-square values have separate middlegame/endgame components, then all classical terms are interpolated by a 24-point non-pawn game-phase scale. The evaluator is layered rather than a single material-plus-PST score:
+
+```mermaid
+flowchart LR
+    MAT[Material] --> MG[Middlegame score]
+    PST[PST / square value] --> MG
+    PAWN[Pawn structure] --> MG
+    ACT[Piece activity] --> MG
+    KING[King safety] --> MG
+    SPACE[Space + development] --> MG
+
+    MAT --> EG[Endgame score]
+    PST --> EG
+    PAWN --> EG
+    ACT --> EG
+    END[Endgame-specific terms] --> EG
+    KING --> EG
+
+    MG --> TAPER[Taper by game phase]
+    EG --> TAPER
+    TAPER --> SCORE[Side-to-move evaluation]
+```
+
+Pawn terms include passed/protected passers, isolated/doubled/backward/connected pawns, chains and pawn islands. Piece terms include mobility, outposts, bishop pair, rook open/semi-open files, 7th-rank activity, trapped-piece penalties and coordination. King terms include shelter, pawn shield, enemy attacks on the king ring, open files and safe king squares. Space/development terms cover central control, occupied/controlled space and undeveloped minor pieces. Endgame terms emphasize king activity, passed-pawn races and rooks behind passed pawns.
+
+NNUE is not stubbed as if it were trained. The intended production path is a separate feature/accumulator layer so network representation and inference can evolve without rewriting move generation or search.
 
 
 ## Search-state invariants
