@@ -82,6 +82,14 @@ def main(engine):
         ), info_lines
 
         session.send("position startpos")
+        session.send("go depth 6")
+        session.wait_for(lambda line: line.startswith("bestmove "), timeout=3.0)
+        depth_lines = [
+            line for line in session.all_lines
+            if line.startswith("info depth 6 ")
+        ]
+        assert depth_lines, "depth-6 search did not complete"
+
         session.send("go movetime 2000")
         time.sleep(0.05)
         stop_sent = time.monotonic()
